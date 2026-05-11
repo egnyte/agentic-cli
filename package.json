@@ -1,0 +1,41 @@
+{
+  "name": "@egnyte/agentic-cli",
+  "version": "1.0.0",
+  "description": "Egnyte CLI designed for AI agent consumption — zero runtime dependencies, agent-first design",
+  "main": "./src/index.js",
+  "bin": {
+    "egnyte": "./bin/egnyte"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/egnyte/agentic-cli.git"
+  },
+  "keywords": [
+    "egnyte",
+    "cli",
+    "file-management",
+    "ai-agent",
+    "storage"
+  ],
+  "author": "egnyte",
+  "license": "Apache-2.0",
+  "files": [
+    "bin/",
+    "src/",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "jasmine",
+    "test:large": "jasmine --config=spec/support/jasmine-large.json --random=false",
+    "lint": "node --check src/index.js src/lib/*.js src/commands/*.js && echo OK",
+    "prepublishOnly": "npm run lint && npm test"
+  },
+  "devDependencies": {
+    "jasmine": "^5.13.0"
+  }
+}

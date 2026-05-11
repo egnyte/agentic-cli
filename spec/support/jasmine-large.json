@@ -1,0 +1,11 @@
+{
+  "spec_dir": "spec",
+  "spec_files": ["**/*_large*[sS]pec.js"],
+  "helpers": [
+    "helpers/egnyte-test-config-loader.js",
+    "helpers/matchers.js",
+    "helpers/node-helpers/**/*.js"
+  ],
+  "stopSpecOnExpectationFailure": false,
+  "random": false
+}

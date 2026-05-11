@@ -1,0 +1,6 @@
+spec/
+.gitignore
+.jshintrc
+Jenkinsfile
+*.xml
+.claude/
