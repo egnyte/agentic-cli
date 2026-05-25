@@ -104,11 +104,26 @@ egnyte schema --list   # lists all 64 available operations
 
 ## Authentication
 
-### Step 0 — Register an OAuth app
-
-Create an app at [developers.egnyte.com](https://developers.egnyte.com). See the [getting started guide](https://developers.egnyte.com/api-docs/read/getting-started) for reference.
-
 ### Option 1 — Interactive login (recommended for local use)
+
+The CLI ships with a built-in OAuth app — no app registration required. Only `--domain` is needed:
+
+```bash
+egnyte login --domain https://mycompany.egnyte.com
+```
+
+**What happens:**
+1. Browser opens to the Egnyte authorization page.
+2. Log in and click **Allow**. Your browser redirects to a URL like:
+   ```
+   https://www.egnyte.com?code=XXXXXX&state=...
+   ```
+3. Copy the value of the `code` parameter from the URL bar and paste it in the terminal when prompted.
+
+The access token is stored at `~/.config/egnyte-cli/config.json` (file mode `0600` — owner read/write only).
+If the token response omits `scope`, the CLI preserves the scopes it requested and shows the raw `scope` string in `egnyte login` / `egnyte whoami`.
+
+**Using your own OAuth app** (optional — for custom redirect URIs, restricted scopes, or enterprise app policies):
 
 ```bash
 egnyte login \
@@ -116,15 +131,14 @@ egnyte login \
   --client-id YOUR_CLIENT_ID \
   --client-secret YOUR_CLIENT_SECRET
 
-# All flags have env var equivalents — omit any flag that is already set in the environment
+# Equivalent via env vars
 EGNYTE_DOMAIN=https://mycompany.egnyte.com \
 EGNYTE_CLIENT_ID=YOUR_CLIENT_ID \
 EGNYTE_CLIENT_SECRET=YOUR_CLIENT_SECRET \
 egnyte login
 ```
 
-The CLI opens your browser for OAuth approval. After authorizing, copy the `code=` value from the redirect URL and paste it in the terminal. The access token is stored at `~/.config/egnyte-cli/config.json` (file mode `0600` — owner read/write only).
-If the token response omits `scope`, the CLI preserves the scopes it requested and shows the raw `scope` string in `egnyte login` / `egnyte whoami`.
+Register your own app at [developers.egnyte.com](https://developers.egnyte.com) if needed. See the [getting started guide](https://developers.egnyte.com/api-docs/read/getting-started) for reference.
 
 ### Option 2 — Environment variables (CI / headless / AI agents)
 

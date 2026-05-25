@@ -171,11 +171,14 @@ async function doOAuthLogin(opts) {
 /** Prompt the user to paste the OAuth authorization code. */
 function promptCode() {
     return new Promise(function(resolve) {
-        process.stderr.write('Paste the authorization code here: ');
+        process.stderr.write('Paste the authorization code here:\n');
         process.stdin.setEncoding('utf8');
         process.stdin.once('data', function(d) {
             process.stdin.destroy();
             resolve(d.trim());
+        });
+        process.stdin.once('end', function() {
+            resolve('');
         });
         process.stdin.resume();
     });

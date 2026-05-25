@@ -66,7 +66,7 @@ integrationDescribe("egnyte perms", function() {
                 "--json", '{"users":{"jsmith":"Viewer"}}', "--dry-run"], OPTS);
             expect(result.status).toBe(0);
             expect(result.stdout).toContain("curl -X POST");
-            expect(result.stdout).toContain("/pubapi/v1/perms/user/Shared/Finance");
+            expect(result.stdout).toContain("/pubapi/v2/perms/Shared/Finance");
             expect(result.stdout).toContain("Authorization: ***");
         });
 
@@ -88,12 +88,12 @@ integrationDescribe("egnyte perms", function() {
     // ── perms delete-user (dry-run only) ────────────────────────────────────────
 
     describe("perms delete-user --dry-run", function() {
-        it("prints curl DELETE without making API call", function() {
+        it("prints curl POST with None permissions without making API call", function() {
             var result = spawnCLI(["perms", "delete-user", "/Shared/Finance",
                 "--json", '{"users":["jsmith"]}', "--dry-run"], OPTS);
             expect(result.status).toBe(0);
-            expect(result.stdout).toContain("curl -X DELETE");
-            expect(result.stdout).toContain("/pubapi/v1/perms/user/Shared/Finance");
+            expect(result.stdout).toContain("curl -X POST");
+            expect(result.stdout).toContain("/pubapi/v2/perms/Shared/Finance");
         });
 
         it("exits 1 when users array is missing from --json", function() {
@@ -112,7 +112,7 @@ integrationDescribe("egnyte perms", function() {
                 "--json", '{"groups":{"Engineering":"Editor"}}', "--dry-run"], OPTS);
             expect(result.status).toBe(0);
             expect(result.stdout).toContain("curl -X POST");
-            expect(result.stdout).toContain("/pubapi/v1/perms/group/Shared/Finance");
+            expect(result.stdout).toContain("/pubapi/v2/perms/Shared/Finance");
         });
 
         it("exits 1 when groups is missing from --json", function() {
@@ -126,12 +126,12 @@ integrationDescribe("egnyte perms", function() {
     // ── perms delete-group (dry-run only) ───────────────────────────────────────
 
     describe("perms delete-group --dry-run", function() {
-        it("prints curl DELETE without making API call", function() {
+        it("prints curl POST with None permissions without making API call", function() {
             var result = spawnCLI(["perms", "delete-group", "/Shared/Finance",
                 "--json", '{"groups":["Engineering"]}', "--dry-run"], OPTS);
             expect(result.status).toBe(0);
-            expect(result.stdout).toContain("curl -X DELETE");
-            expect(result.stdout).toContain("/pubapi/v1/perms/group/Shared/Finance");
+            expect(result.stdout).toContain("curl -X POST");
+            expect(result.stdout).toContain("/pubapi/v2/perms/Shared/Finance");
         });
 
         it("exits 1 when groups array is missing from --json", function() {

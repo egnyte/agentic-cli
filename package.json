@@ -1,6 +1,6 @@
 {
   "name": "@egnyte/agentic-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Egnyte CLI designed for AI agent consumption — zero runtime dependencies, agent-first design",
   "main": "./src/index.js",
   "bin": {
@@ -33,9 +33,28 @@
     "test": "jasmine",
     "test:large": "jasmine --config=spec/support/jasmine-large.json --random=false",
     "lint": "node --check src/index.js src/lib/*.js src/commands/*.js && echo OK",
-    "prepublishOnly": "npm run lint && npm test"
+    "prepublishOnly": "npm run lint && npm test",
+    "release": "VERSION=$(node -p \"require('./package.json').version\") && npm view @egnyte/agentic-cli@$VERSION version --registry https://nexus3.egnyte-internal.com/repository/integrations-nexus/ 2>/dev/null && echo \"Version $VERSION already published, skipping.\" || npm publish",
+    "build:binaries": "pkg . --compress GZip --targets node18-macos-x64,node18-macos-arm64,node18-win-x64,node18-win-arm64,node18-linux-x64,node18-linux-arm64 --output dist/binaries/egnyte"
+  },
+  "pkg": {
+    "scripts": "src/**/*.js",
+    "assets": [],
+    "targets": [
+      "node18-macos-x64",
+      "node18-macos-arm64",
+      "node18-win-x64",
+      "node18-win-arm64",
+      "node18-linux-x64",
+      "node18-linux-arm64"
+    ],
+    "outputPath": "dist/binaries"
+  },
+  "publishConfig": {
+    "@egnyte:registry": "https://nexus3.egnyte-internal.com/repository/integrations-nexus/"
   },
   "devDependencies": {
-    "jasmine": "^5.13.0"
+    "jasmine": "^5.13.0",
+    "@yao-pkg/pkg": "^5.12.0"
   }
 }

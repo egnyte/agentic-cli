@@ -406,7 +406,7 @@ const SCHEMA = {
     'perms.set-user': {
         summary:     'Set user permissions on a folder',
         method:      'POST',
-        endpoint:    '/pubapi/v1/perms/user/{folderpath}',
+        endpoint:    '/pubapi/v2/perms/{folderpath}',
         mutating:    true,
         body_params: {
             users: { type: 'object', required: true, description: '{"username": "Viewer|Editor|Owner|None"}' },
@@ -414,9 +414,9 @@ const SCHEMA = {
         example: "egnyte perms set-user /Shared/Finance --json '{\"users\": {\"jsmith\": \"Viewer\"}}' --dry-run",
     },
     'perms.delete-user': {
-        summary:     'Remove user permissions from a folder',
-        method:      'DELETE',
-        endpoint:    '/pubapi/v1/perms/user/{folderpath}',
+        summary:     'Remove user permissions from a folder (sets each user to "None" via v2 API)',
+        method:      'POST',
+        endpoint:    '/pubapi/v2/perms/{folderpath}',
         mutating:    true,
         body_params: {
             users: { type: 'array', required: true, description: '["username1", "username2"]' },
@@ -434,7 +434,7 @@ const SCHEMA = {
     'perms.set-group': {
         summary:     'Set group permissions on a folder',
         method:      'POST',
-        endpoint:    '/pubapi/v1/perms/group/{folderpath}',
+        endpoint:    '/pubapi/v2/perms/{folderpath}',
         mutating:    true,
         body_params: {
             groups: { type: 'object', required: true, description: '{"GroupName": "Viewer|Editor|Owner|None"}' },
@@ -442,9 +442,9 @@ const SCHEMA = {
         example: "egnyte perms set-group /Shared/Finance --json '{\"groups\": {\"Engineering\": \"Editor\"}}' --dry-run",
     },
     'perms.delete-group': {
-        summary:     'Remove group permissions from a folder',
-        method:      'DELETE',
-        endpoint:    '/pubapi/v1/perms/group/{folderpath}',
+        summary:     'Remove group permissions from a folder (sets each group to "None" via v2 API)',
+        method:      'POST',
+        endpoint:    '/pubapi/v2/perms/{folderpath}',
         mutating:    true,
         body_params: {
             groups: { type: 'array', required: true, description: '["GroupName1", "GroupName2"]' },

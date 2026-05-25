@@ -9,9 +9,9 @@ const { apiRequest, buildUrl }     = require('../lib/http');
 const { validatePath }             = require('../lib/validation');
 const { out, formatDryRun, printDryRun, CLIError, requireConfirmation } = require('../lib/output');
 
-const PERMS_FOLDER_API = '/pubapi/v1/perms/folder';
-const PERMS_USER_API   = '/pubapi/v1/perms/user';
-const PERMS_GROUP_API  = '/pubapi/v1/perms/group';
+const PERMS_V2_API      = '/pubapi/v2/perms';
+const PERMS_FOLDER_API  = '/pubapi/v1/perms/folder';
+const PERMS_USER_LOOKUP = '/pubapi/v1/perms/user';
 
 // ── perms get-user ────────────────────────────────────────────────────────────
 
@@ -45,10 +45,12 @@ async function cmdPermsSetUser(args) {
                 return { label: p, path: p, body: body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, PERMS_USER_API + task.path), body: task.body, bodyType: 'json' });
+                const v2Body = { userPerms: task.body.users };
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, PERMS_V2_API + task.path), body: v2Body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'POST', apiPath: PERMS_USER_API + task.path, body: task.body, bodyType: 'json' });
+                const v2Body = { userPerms: task.body.users };
+                const result = await apiRequest({ domain, token, method: 'POST', apiPath: PERMS_V2_API + task.path, body: v2Body, bodyType: 'json' });
                 return result || { status: 'ok', path: task.path };
             },
         });
@@ -62,14 +64,15 @@ async function cmdPermsSetUser(args) {
     if (!body.users) throw new CLIError('"users" is required in --json e.g. {"users": {"jsmith": "Viewer"}}');
     validatePath(p);
 
-    const apiPath = PERMS_USER_API + p;
+    const apiPath = PERMS_V2_API + p;
+    const v2Body  = { userPerms: body.users };
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body: v2Body, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body: v2Body, bodyType: 'json' });
     out(result || { status: 'ok', path: p });
 }
 
@@ -93,10 +96,14 @@ async function cmdPermsDeleteUser(args) {
                 return { label: p, path: p, body: body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'DELETE', url: buildUrl(domain, PERMS_USER_API + task.path), body: task.body, bodyType: 'json' });
+                const noneMap = Object.fromEntries(task.body.users.map(u => [u, 'None']));
+                const v2Body = { userPerms: noneMap };
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, PERMS_V2_API + task.path), body: v2Body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                await apiRequest({ domain, token, method: 'DELETE', apiPath: PERMS_USER_API + task.path, body: task.body, bodyType: 'json' });
+                const noneMap = Object.fromEntries(task.body.users.map(u => [u, 'None']));
+                const v2Body = { userPerms: noneMap };
+                await apiRequest({ domain, token, method: 'POST', apiPath: PERMS_V2_API + task.path, body: v2Body, bodyType: 'json' });
                 return { status: 'deleted', path: task.path };
             },
         });
@@ -110,14 +117,16 @@ async function cmdPermsDeleteUser(args) {
     if (!body.users) throw new CLIError('"users" array is required in --json e.g. {"users": ["jsmith"]}');
     validatePath(p);
 
-    const apiPath = PERMS_USER_API + p;
+    const apiPath = PERMS_V2_API + p;
+    const noneMap = Object.fromEntries(body.users.map(u => [u, 'None']));
+    const v2Body  = { userPerms: noneMap };
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'DELETE', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body: v2Body, bodyType: 'json' });
         return;
     }
 
-    await apiRequest({ domain, token, method: 'DELETE', apiPath, body, bodyType: 'json' });
+    await apiRequest({ domain, token, method: 'POST', apiPath, body: v2Body, bodyType: 'json' });
     out({ status: 'deleted', path: p });
 }
 
@@ -153,10 +162,12 @@ async function cmdPermsSetGroup(args) {
                 return { label: p, path: p, body: body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, PERMS_GROUP_API + task.path), body: task.body, bodyType: 'json' });
+                const v2Body = { groupPerms: task.body.groups };
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, PERMS_V2_API + task.path), body: v2Body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'POST', apiPath: PERMS_GROUP_API + task.path, body: task.body, bodyType: 'json' });
+                const v2Body = { groupPerms: task.body.groups };
+                const result = await apiRequest({ domain, token, method: 'POST', apiPath: PERMS_V2_API + task.path, body: v2Body, bodyType: 'json' });
                 return result || { status: 'ok', path: task.path };
             },
         });
@@ -170,14 +181,15 @@ async function cmdPermsSetGroup(args) {
     if (!body.groups) throw new CLIError('"groups" is required in --json e.g. {"groups": {"Engineering": "Editor"}}');
     validatePath(p);
 
-    const apiPath = PERMS_GROUP_API + p;
+    const apiPath = PERMS_V2_API + p;
+    const v2Body  = { groupPerms: body.groups };
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body: v2Body, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body: v2Body, bodyType: 'json' });
     out(result || { status: 'ok', path: p });
 }
 
@@ -201,10 +213,14 @@ async function cmdPermsDeleteGroup(args) {
                 return { label: p, path: p, body: body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'DELETE', url: buildUrl(domain, PERMS_GROUP_API + task.path), body: task.body, bodyType: 'json' });
+                const noneMap = Object.fromEntries(task.body.groups.map(g => [g, 'None']));
+                const v2Body = { groupPerms: noneMap };
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, PERMS_V2_API + task.path), body: v2Body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                await apiRequest({ domain, token, method: 'DELETE', apiPath: PERMS_GROUP_API + task.path, body: task.body, bodyType: 'json' });
+                const noneMap = Object.fromEntries(task.body.groups.map(g => [g, 'None']));
+                const v2Body = { groupPerms: noneMap };
+                await apiRequest({ domain, token, method: 'POST', apiPath: PERMS_V2_API + task.path, body: v2Body, bodyType: 'json' });
                 return { status: 'deleted', path: task.path };
             },
         });
@@ -218,14 +234,16 @@ async function cmdPermsDeleteGroup(args) {
     if (!body.groups) throw new CLIError('"groups" array is required in --json e.g. {"groups": ["Engineering"]}');
     validatePath(p);
 
-    const apiPath = PERMS_GROUP_API + p;
+    const apiPath = PERMS_V2_API + p;
+    const noneMap = Object.fromEntries(body.groups.map(g => [g, 'None']));
+    const v2Body  = { groupPerms: noneMap };
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'DELETE', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body: v2Body, bodyType: 'json' });
         return;
     }
 
-    await apiRequest({ domain, token, method: 'DELETE', apiPath, body, bodyType: 'json' });
+    await apiRequest({ domain, token, method: 'POST', apiPath, body: v2Body, bodyType: 'json' });
     out({ status: 'deleted', path: p });
 }
 
@@ -239,7 +257,7 @@ async function cmdPermsGetByUser(args) {
     if (!username)    throw new CLIError("Usage: egnyte perms get-by-user <username> --json '{\"folder\":\"/Shared\"}'");
     if (!query.folder) throw new CLIError('"folder" is required in --json e.g. {"folder": "/Shared"}');
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: PERMS_USER_API + '/' + username, query });
+    const result = await apiRequest({ domain, token, method: 'GET', apiPath: PERMS_USER_LOOKUP + '/' + username, query });
     out(applyFields(result, args.fields));
 }
 

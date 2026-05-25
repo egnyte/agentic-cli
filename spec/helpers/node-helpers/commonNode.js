@@ -44,10 +44,16 @@ global.spawnCLI = function spawnCLI(args, opts) {
             catch (_) { return null; }
         },
 
-        /** Parse stderr as JSON (structured error). Returns null if not JSON. */
+        /** Parse stderr as JSON (structured error). Tries full stderr first,
+         *  then falls back to the last non-empty line (handles info() prefix text). */
         errorJson: function() {
             try { return JSON.parse(result.stderr); }
-            catch (_) { return null; }
+            catch (_) {}
+            var lines = (result.stderr || '').split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
+            for (var i = lines.length - 1; i >= 0; i--) {
+                try { return JSON.parse(lines[i]); } catch (_) {}
+            }
+            return null;
         },
     };
 };

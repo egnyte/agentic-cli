@@ -8,19 +8,28 @@ const { apiRequest }                                = require('../lib/http');
 const { applyFields }                               = require('../lib/fields');
 const { normalizeDomain }                           = require('../lib/domain');
 
+// Egnyte-owned CLI OAuth app.
+// Users may override with --client-id / --client-secret or EGNYTE_CLIENT_ID / EGNYTE_CLIENT_SECRET.
+const DEFAULT_CLIENT_ID     = 'B2USfGyTcBwQlDsupAfXwks7UaBgfL4NNAmZRde0bub7Q7jP';
+const DEFAULT_CLIENT_SECRET = 'gWwjOzVa4J475WqV07YQVuAsJ7Z1x49GQ4mjNBDDDoIA4GkCOx36VGGqwqeLb1RV';
+
 // ── login ─────────────────────────────────────────────────────────────────────
 
 async function cmdLogin(args) {
-    const domain       = normalizeDomain(args.domain || args._[1] || process.env.EGNYTE_DOMAIN);
-    const clientId     = args['client-id']      || process.env.EGNYTE_CLIENT_ID;
-    const clientSecret = args['client-secret']  || process.env.EGNYTE_CLIENT_SECRET;
-    const redirectUri  = args['redirect-uri']   || process.env.EGNYTE_REDIRECT_URI || 'https://www.egnyte.com';
-    const scope        = args.scope             || process.env.EGNYTE_SCOPE;
-    const profileName  = args.profile || 'default';
+    const domain      = normalizeDomain(args.domain || args._[1] || process.env.EGNYTE_DOMAIN);
+    const redirectUri = args['redirect-uri'] || process.env.EGNYTE_REDIRECT_URI || 'https://www.egnyte.com';
+    const scope       = args.scope           || process.env.EGNYTE_SCOPE;
+    const profileName = args.profile || 'default';
 
-    if (!domain)       throw new CLIError('--domain is required (or set EGNYTE_DOMAIN). Example: egnyte login --domain https://mycompany.egnyte.com');
-    if (!clientId)     throw new CLIError('--client-id is required, or set EGNYTE_CLIENT_ID env var.');
-    if (!clientSecret) throw new CLIError('--client-secret is required, or set EGNYTE_CLIENT_SECRET env var.');
+    if (!domain) throw new CLIError('--domain is required (or set EGNYTE_DOMAIN). Example: egnyte login --domain https://mycompany.egnyte.com');
+
+    const customId     = args['client-id']     || process.env.EGNYTE_CLIENT_ID;
+    const customSecret = args['client-secret'] || process.env.EGNYTE_CLIENT_SECRET;
+    if (!!customId !== !!customSecret) {
+        throw new CLIError('Both --client-id and --client-secret are required when using a custom OAuth app (got only one).');
+    }
+    const clientId     = customId     || DEFAULT_CLIENT_ID;
+    const clientSecret = customSecret || DEFAULT_CLIENT_SECRET;
 
     const tokenData = await doOAuthLogin({ domain, clientId, clientSecret, redirectUri, scope });
     setProfile(profileName, tokenData);

@@ -27,24 +27,56 @@ integrationDescribe("egnyte auth", function() {
             expect(err.error).toBeTruthy();
         });
 
-        it("exits 1 with JSON error when --client-id is missing", function() {
-            var result = spawnCLI(["login", "--domain", "https://testdomain.egnyte.com", "--client-secret", "csec"], DUMMY_OPTS);
+        it("exits 1 with error when --client-id provided without --client-secret", function() {
+            var result = spawnCLI(["login", "--domain", "https://testdomain.egnyte.com", "--client-id", "cid"], { env: { EGNYTE_TOKEN: "", EGNYTE_DOMAIN: "", EGNYTE_CLIENT_ID: "", EGNYTE_CLIENT_SECRET: "" } });
             expect(result.status).toBe(1);
             var err = result.errorJson();
             expect(err).not.toBeNull();
-            expect(err.error).toBeTruthy();
+            expect(err.error).toContain('--client-id and --client-secret');
         });
 
-        it("exits 1 with JSON error when --client-secret is missing", function() {
-            var result = spawnCLI(["login", "--domain", "https://testdomain.egnyte.com", "--client-id", "cid"], DUMMY_OPTS);
+        it("exits 1 with error when --client-secret provided without --client-id", function() {
+            var result = spawnCLI(["login", "--domain", "https://testdomain.egnyte.com", "--client-secret", "csec"], { env: { EGNYTE_TOKEN: "", EGNYTE_DOMAIN: "", EGNYTE_CLIENT_ID: "", EGNYTE_CLIENT_SECRET: "" } });
             expect(result.status).toBe(1);
             var err = result.errorJson();
             expect(err).not.toBeNull();
-            expect(err.error).toBeTruthy();
+            expect(err.error).toContain('--client-id and --client-secret');
+        });
+
+        it("exits 1 with error when EGNYTE_CLIENT_ID set without EGNYTE_CLIENT_SECRET", function() {
+            var result = spawnCLI(["login", "--domain", "https://testdomain.egnyte.com", "--no-browser"], { env: { EGNYTE_TOKEN: "", EGNYTE_DOMAIN: "", EGNYTE_CLIENT_ID: "envid", EGNYTE_CLIENT_SECRET: "" } });
+            expect(result.status).toBe(1);
+            var err = result.errorJson();
+            expect(err).not.toBeNull();
+            expect(err.error).toContain('--client-id and --client-secret');
+        });
+
+        it("exits 1 with error when EGNYTE_CLIENT_SECRET set without EGNYTE_CLIENT_ID", function() {
+            var result = spawnCLI(["login", "--domain", "https://testdomain.egnyte.com", "--no-browser"], { env: { EGNYTE_TOKEN: "", EGNYTE_DOMAIN: "", EGNYTE_CLIENT_ID: "", EGNYTE_CLIENT_SECRET: "envsec" } });
+            expect(result.status).toBe(1);
+            var err = result.errorJson();
+            expect(err).not.toBeNull();
+            expect(err.error).toContain('--client-id and --client-secret');
+        });
+
+        it("proceeds past credential validation when both --client-id and --client-secret provided", function() {
+            var result = spawnCLI(["login", "--domain", "https://testdomain.egnyte.com", "--client-id", "cid", "--client-secret", "csec", "--no-browser"], DUMMY_OPTS);
+            expect(result.status).toBe(1);
+            var err = result.errorJson();
+            expect(err).not.toBeNull();
+            expect(err.error).not.toContain('--client-id and --client-secret');
+        });
+
+        it("proceeds past credential validation when neither custom credential provided (uses built-in app)", function() {
+            var result = spawnCLI(["login", "--domain", "https://testdomain.egnyte.com", "--no-browser"], { env: { EGNYTE_TOKEN: "", EGNYTE_DOMAIN: "", EGNYTE_CLIENT_ID: "", EGNYTE_CLIENT_SECRET: "" } });
+            expect(result.status).toBe(1);
+            var err = result.errorJson();
+            expect(err).not.toBeNull();
+            expect(err.error).not.toContain('--client-id and --client-secret');
         });
 
         it("does not write token to stdout on error", function() {
-            var result = spawnCLI(["login", "--client-id", "cid", "--client-secret", "csec"], DUMMY_OPTS);
+            var result = spawnCLI(["login", "--client-id", "cid", "--client-secret", "csec", "--no-browser"], DUMMY_OPTS);
             expect(result.stdout).toBe("");
         });
 

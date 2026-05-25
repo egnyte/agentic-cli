@@ -49,17 +49,7 @@ pipeline {
                 }
             }
             steps {
-                script {
-                    sh 'cp /home/packer/.npmrc ./.npmrc'
-
-                    def dockerArgs = [
-                        '-v /etc/pki:/etc/pki:ro',
-                        '-v /etc/ssl:/etc/ssl:ro'
-                    ].join(' ')
-                    docker.image("node:24").inside(dockerArgs) {
-                        sh 'export NPM_CONFIG_CACHE=$(pwd)/.npm && npm publish --registry https://nexus3.egnyte-internal.com/repository/npm/'
-                    }
-                }
+                runRelease(gitlabProjectId: 6736)
             }
         }
     }

@@ -42,8 +42,6 @@ function _buildApiError(statusCode, bodyBuf) {
     } catch (_) {
         if (bodyStr) message = 'HTTP ' + statusCode + ': ' + bodyStr.slice(0, 300);
     }
-
-    // Auth hint — mirrors Box CLI pattern
     if (statusCode === 401) {
         message += '\n' + AUTH_FAILED_HINT;
     }

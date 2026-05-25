@@ -1,0 +1,99 @@
+name: Build and publish installers
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries-and-windows:
+    name: Build binaries + Windows installers
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build cross-platform binaries
+        run: npx pkg . --compress GZip --targets node18-macos-x64,node18-macos-arm64,node18-win-x64,node18-win-arm64,node18-linux-x64,node18-linux-arm64 --output dist/binaries/egnyte
+
+      - name: Install NSIS
+        run: sudo apt-get install -y nsis
+
+      - name: Build Windows installers
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p dist/installers
+          for ARCH in x64 arm64; do
+            makensis \
+              -DVERSION=$VERSION \
+              -DARCH=$ARCH \
+              scripts/installer-win.nsi
+          done
+
+      - name: Package tarballs
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p dist/installers
+          cd dist/binaries
+          for TARGET in darwin-x64 darwin-arm64 linux-x64 linux-arm64 win32-x64 win32-arm64; do
+            case $TARGET in
+              darwin-x64)   BIN=egnyte-macos-x64    ;;
+              darwin-arm64) BIN=egnyte-macos-arm64  ;;
+              linux-x64)    BIN=egnyte-linux-x64    ;;
+              linux-arm64)  BIN=egnyte-linux-arm64  ;;
+              win32-x64)    BIN=egnyte-win-x64.exe  ;;
+              win32-arm64)  BIN=egnyte-win-arm64.exe ;;
+            esac
+            tar -czf "../installers/egnyte-v${VERSION}-${TARGET}.tar.gz" "$BIN"
+          done
+
+      - name: Upload binaries artifact for macOS job
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: dist/binaries/egnyte-macos-*
+          retention-days: 1
+
+      - name: Upload Windows installers + tarballs to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.ref_name }} dist/installers/* --clobber
+
+  build-macos-pkg:
+    name: Build macOS .pkg installers
+    runs-on: macos-latest
+    needs: build-binaries-and-windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: dist/binaries
+
+      - name: Make binaries executable
+        run: chmod +x dist/binaries/egnyte-macos-*
+
+      - name: Build macOS pkg installers
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          bash scripts/build-macos-pkg.sh $VERSION x64
+          bash scripts/build-macos-pkg.sh $VERSION arm64
+
+      - name: Upload macOS pkg to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.ref_name }} dist/installers/*.pkg --clobber

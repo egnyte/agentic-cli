@@ -16,12 +16,19 @@ npm install -g @egnyte/agentic-cli
 Run `egnyte whoami` first. If it returns nothing or an error, no credentials are stored.
 
 1. Check env vars: `echo $EGNYTE_TOKEN $EGNYTE_DOMAIN` — if both set, CLI uses them automatically; skip `egnyte login`.
-2. No env vars: obtain `client_id` + `client_secret` from your Egnyte admin, or register an OAuth app manually at [developers.egnyte.com](https://developers.egnyte.com) (browser, one-time), then run `egnyte login` below.
+2. No env vars: run `egnyte login --domain https://<subdomain>.egnyte.com` — the CLI has a built-in OAuth app, no client credentials needed.
 
-> **An AI agent must never navigate to developers.egnyte.com or attempt to register an OAuth app automatically. Stop and ask the user for credentials.**
+> **An AI agent must never navigate to developers.egnyte.com or attempt to register an OAuth app automatically.**
 
 ```bash
-# Interactive login — requests all scopes automatically
+# Interactive login — only --domain required (built-in OAuth app used automatically)
+egnyte login --domain https://<subdomain>.egnyte.com
+
+# After running, the CLI opens a browser. User approves, browser redirects to:
+#   https://www.egnyte.com?code=XXXXXX&state=...
+# User copies the `code` value from the URL bar and pastes it in the terminal.
+
+# Using a custom OAuth app (optional — overrides the built-in app)
 egnyte login --domain https://<subdomain>.egnyte.com --client-id <id> --client-secret <secret>
 
 # Restrict scopes if needed (space-separated)

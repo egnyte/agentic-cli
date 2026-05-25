@@ -133,9 +133,9 @@ describe("SCHEMA registry", function() {
         it("groups.create uses POST",        function() { expect(SCHEMA["groups.create"].method).toBe("POST"); });
         it("groups.update uses PATCH",       function() { expect(SCHEMA["groups.update"].method).toBe("PATCH"); });
         it("perms.set-user uses POST",       function() { expect(SCHEMA["perms.set-user"].method).toBe("POST"); });
-        it("perms.delete-user uses DELETE",  function() { expect(SCHEMA["perms.delete-user"].method).toBe("DELETE"); });
+        it("perms.delete-user uses POST",  function() { expect(SCHEMA["perms.delete-user"].method).toBe("POST"); });
         it("perms.set-group uses POST",      function() { expect(SCHEMA["perms.set-group"].method).toBe("POST"); });
-        it("perms.delete-group uses DELETE", function() { expect(SCHEMA["perms.delete-group"].method).toBe("DELETE"); });
+        it("perms.delete-group uses POST", function() { expect(SCHEMA["perms.delete-group"].method).toBe("POST"); });
     });
 
     describe("search params", function() {
