@@ -71,8 +71,8 @@ Three ways to give an AI agent access to Egnyte: a REST API, an MCP server, or t
 # Install globally
 npm install -g @egnyte/agentic-cli
 
-# Authenticate (register your OAuth app at https://developers.egnyte.com first)
-egnyte login --domain https://mycompany.egnyte.com --client-id <id> --client-secret <secret>
+# Authenticate — built-in OAuth app, no registration needed
+egnyte login --domain https://mycompany.egnyte.com
 
 # Verify
 egnyte whoami
@@ -901,9 +901,14 @@ npm install -g @egnyte/agentic-cli
 # Authenticate
 egnyte login --domain https://mycompany.egnyte.com --client-id <id> --client-secret <secret>
 
-# Add the skill file to Claude's global instructions
+# Add the skill file to Claude's global instructions (run from the repo root)
 cat CLAUDE.md >> ~/.claude/CLAUDE.md
+
+# Or, without cloning — download directly from npm (no auth required)
+curl -fsSL https://unpkg.com/@egnyte/agentic-cli/CLAUDE.md >> ~/.claude/CLAUDE.md
 ```
+
+`CLAUDE.md` is in the repo root. If you run `cat CLAUDE.md` from a different directory it will fail — use the `unpkg` URL above to download without cloning.
 
 `CLAUDE.md` teaches Claude the core rules: always `--dry-run` before mutations, always `--fields` on list calls, never guess file IDs, paths must start with `/`.
 
