@@ -53,18 +53,29 @@ function info(msg) {
     process.stderr.write(msg + '\n');
 }
 
+/**
+ * Quote a value as a single-quoted POSIX shell word. An embedded single
+ * quote is closed, escaped, and reopened ('\'') so the value cannot end the
+ * quoting. Without this, a value that contains a quote (for example an
+ * Egnyte path with an apostrophe) breaks out of the quoted string in the
+ * previewed curl command, and a crafted path can inject arbitrary commands.
+ */
+function shellQuote(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'";
+}
+
 function formatDryRun(opts) {
     const { method, url, body, bodyType, localFile } = opts;
     const parts = [
-        "curl -X " + method + " '" + url + "'",
+        'curl -X ' + method + ' ' + shellQuote(url),
         "  -H 'Authorization: ***'",
     ];
     if (bodyType === 'json') {
         parts.push("  -H 'Content-Type: application/json'");
-        parts.push("  -d '" + JSON.stringify(body) + "'");
+        parts.push('  -d ' + shellQuote(JSON.stringify(body)));
     } else if (bodyType === 'multipart') {
         parts.push("  -H 'Content-Type: multipart/form-data'");
-        parts.push("  -F 'file=@" + localFile + "'");
+        parts.push('  -F ' + shellQuote('file=@' + localFile));
     }
     return parts.join(' \\\n');
 }
@@ -113,4 +124,4 @@ function serializeError(err) {
     return payload;
 }
 
-module.exports = { CLIError, out, fatal, info, formatDryRun, printDryRun, requireConfirmation, serializeError };
+module.exports = { CLIError, out, fatal, info, shellQuote, formatDryRun, printDryRun, requireConfirmation, serializeError };
