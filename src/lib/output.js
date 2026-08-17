@@ -91,11 +91,18 @@ function printDryRun(opts) {
  *
  * Throws CLIError when neither flag is present, so accidents are impossible
  * at the binary level regardless of what the skill file says.
+ *
+ * @param {object} args             Parsed CLI args
+ * @param {string} [reason]         Optional one-line explanation of why this
+ *                                  command mutates, appended to the guard error.
+ *                                  Use for commands whose name does not make the
+ *                                  mutation obvious (e.g. `ai ask`).
  */
-function requireConfirmation(args) {
+function requireConfirmation(args, reason) {
     if (!args['dry-run'] && !args.yes) {
         throw new CLIError(
             'Mutating operation requires confirmation.\n' +
+            (reason ? '  ' + reason + '\n' : '') +
             '  --dry-run   Preview the request without executing\n' +
             '  --yes       Confirm and execute'
         );

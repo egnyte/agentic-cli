@@ -1,6 +1,6 @@
 {
   "name": "@egnyte/agentic-cli",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "Egnyte CLI designed for AI agent consumption — zero runtime dependencies, agent-first design",
   "main": "./src/index.js",
   "bin": {

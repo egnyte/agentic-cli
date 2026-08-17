@@ -2,6 +2,7 @@ node_modules/
 dist/
 npm-debug.log
 spec/conf/egnyte-test-config.js
+spec/fixtures/captures/
 *.log
 .npm
 TEST*.xml

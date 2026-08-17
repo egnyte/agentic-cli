@@ -31,7 +31,8 @@ async function cmdLogin(args) {
     const clientId     = customId     || DEFAULT_CLIENT_ID;
     const clientSecret = customSecret || DEFAULT_CLIENT_SECRET;
 
-    const tokenData = await doOAuthLogin({ domain, clientId, clientSecret, redirectUri, scope });
+    const useLocalhostCallback = !customId || customId === DEFAULT_CLIENT_ID;
+    const tokenData = await doOAuthLogin({ domain, clientId, clientSecret, redirectUri, scope, useLocalhostCallback });
     setProfile(profileName, tokenData);
 
     // Set as default if this is the first profile

@@ -39,7 +39,7 @@ const { cmdProjectsList, cmdProjectsGet,
         cmdProjectsDelete }                      = require('./commands/projects');
 const { cmdSchema }                              = require('./commands/schema');
 const { cmdRequest }                             = require('./commands/request');
-const { cmdAiAsk, cmdAiAskDocument,
+const { cmdAiAsk, cmdAiStatus, cmdAiAskDocument,
         cmdAiSummarize, cmdAiAskKb,
         cmdAiListKbs, cmdAiHybridSearch }        = require('./commands/ai');
 const { cmdAgentsList, cmdAgentsAsk,
@@ -132,6 +132,7 @@ const DISPATCH = {
 
     // AI
     'ai.ask':               cmdAiAsk,
+    'ai.status':            cmdAiStatus,
     'ai.ask-document':      cmdAiAskDocument,
     'ai.summarize':         cmdAiSummarize,
     'ai.ask-kb':            cmdAiAskKb,
@@ -151,7 +152,7 @@ function printHelp() {
 Usage: egnyte <group> <command> [options]
 
 Auth:
-  login   --domain <d> --client-id <id> --client-secret <s> [--redirect-uri <url>] [--profile <name>]
+  login   --domain <d> [--client-id <id> --client-secret <s> [--redirect-uri <url>]] [--profile <name>]
   logout  [--profile <name>]
   whoami  [--profile <name>]
   profiles list | use <name> | remove <name>
@@ -241,7 +242,8 @@ Agents:
   agents status <agentId> <requestId>              Check execution status of a prior ask
 
 AI:
-  ai ask "<question>" [--json '{}']                Ask a question via Copilot (optionally scope to files/folders)
+  ai ask "<question>" --yes|--dry-run [--json '{}'] Ask the AI Assistant (async; polls until done; --no-wait to return immediately)
+  ai status <executionId>                          Check execution status of a prior ai ask
   ai ask-document <path> "<question>" [--json '{}'] Ask a question about a specific file
   ai summarize <path>                              Summarize the content of a file
   ai list-kbs [--json '{}']                        List available Knowledge Bases

@@ -115,6 +115,15 @@ integrationDescribe("egnyte agents", function() {
             expect(result.stdout).toContain("e1");
         });
 
+        it("URL-encodes the agentId in the ask path", function() {
+            var result = spawnCLI(
+                ["agents", "ask", "agent/../123", "test question", "--dry-run"],
+                DUMMY_OPTS
+            );
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain("/pubapi/v1/ai/agents/agent%2F..%2F123/ask");
+        });
+
         it("exits 1 when agentId is missing", function() {
             var result = spawnCLI(["agents", "ask"], DUMMY_OPTS);
             expect(result.status).toBe(1);
@@ -159,6 +168,15 @@ integrationDescribe("egnyte agents", function() {
             expect(result.stdout).toContain("curl -X GET");
             expect(result.stdout).toContain("/pubapi/v1/ai/agents/agent-123/ask/req-456/status");
             expect(result.stdout).not.toContain("dummytoken123");
+        });
+
+        it("URL-encodes the agentId and requestId in the status path", function() {
+            var result = spawnCLI(
+                ["agents", "status", "agent/../123", "req/../456", "--dry-run"],
+                DUMMY_OPTS
+            );
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain("/pubapi/v1/ai/agents/agent%2F..%2F123/ask/req%2F..%2F456/status");
         });
 
         it("exits 1 when agentId is missing", function() {

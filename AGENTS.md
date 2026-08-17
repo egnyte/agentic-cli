@@ -24,11 +24,12 @@ Run `egnyte whoami` first. If it returns nothing or an error, no credentials are
 # Interactive login — only --domain required (built-in OAuth app used automatically)
 egnyte login --domain https://<subdomain>.egnyte.com
 
-# After running, the CLI opens a browser. User approves, browser redirects to:
-#   https://www.egnyte.com?code=XXXXXX&state=...
-# User copies the `code` value from the URL bar and pastes it in the terminal.
+# After running, the CLI opens a browser. User approves and the authorization code
+# is captured automatically via a local callback server — no copy-pasting required.
 
 # Using a custom OAuth app (optional — overrides the built-in app)
+# Falls back to manual flow: after browser approval, copy the `code` from the redirect URL
+# and paste it in the terminal when prompted.
 egnyte login --domain https://<subdomain>.egnyte.com --client-id <id> --client-secret <secret>
 
 # Restrict scopes if needed (space-separated)
@@ -252,9 +253,12 @@ egnyte lock get /Shared/report.pdf
 
 # ── AI ────────────────────────────────────────────────────────────────────────
 
-# Ask a question via Copilot (optionally scope to files or folders)
-egnyte ai ask "What are the key metrics in Q3?" --fields response
-egnyte ai ask "Revenue trends?" --json '{"selectedItems":{"folders":[{"id":"<folder-id>"}]},"includeCitations":true}' --fields response,citations
+# Ask the AI Assistant (optionally scope to files or folders) — requires --yes or --dry-run;
+# async: submits, then polls every 6 s (up to 5 min) unless --no-wait is used
+egnyte ai ask "What are the key metrics in Q3?" --yes --fields status,responseText,citations
+egnyte ai ask "Revenue trends?" --yes --json '{"selectedItems":{"folders":[{"id":"<folder-id>"}]},"includeCitations":true}' --fields status,responseText,citations
+egnyte ai ask "Long-running analysis" --yes --no-wait --fields executionId
+egnyte ai status <executionId> --fields status,responseText,citations
 
 # Ask a question about a specific file (path auto-resolved to entry-id)
 egnyte ai ask-document /Shared/Contracts/acme.pdf "What are the payment terms?" --fields response
@@ -303,3 +307,7 @@ egnyte fs get /Shared/report.pdf --verbose
 ```
 
 Check `_ratelimit.qps_remaining` in bulk loops and pause when it hits 0.
+
+## AI Safeguards
+
+AI commands (`ai *`, `agents *`), `search`, and file content reads (`fs download`, `fs download-by-id`, `fs get-content`) automatically send `X-Egnyte-Ai-Safeguards-Enabled: true` so server-side AI Safeguards policies apply. When active, safeguarded entries are filtered from search results without updating `total_count` — paginate by `offset` until results come back empty, never by counting toward `total_count`. Downloads of safeguarded files may be redacted or denied.

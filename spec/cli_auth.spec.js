@@ -67,14 +67,6 @@ integrationDescribe("egnyte auth", function() {
             expect(err.error).not.toContain('--client-id and --client-secret');
         });
 
-        it("proceeds past credential validation when neither custom credential provided (uses built-in app)", function() {
-            var result = spawnCLI(["login", "--domain", "https://testdomain.egnyte.com", "--no-browser"], { env: { EGNYTE_TOKEN: "", EGNYTE_DOMAIN: "", EGNYTE_CLIENT_ID: "", EGNYTE_CLIENT_SECRET: "" } });
-            expect(result.status).toBe(1);
-            var err = result.errorJson();
-            expect(err).not.toBeNull();
-            expect(err.error).not.toContain('--client-id and --client-secret');
-        });
-
         it("does not write token to stdout on error", function() {
             var result = spawnCLI(["login", "--client-id", "cid", "--client-secret", "csec", "--no-browser"], DUMMY_OPTS);
             expect(result.stdout).toBe("");

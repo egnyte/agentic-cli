@@ -4,6 +4,7 @@ const { resolveAuth }                        = require('../lib/auth');
 const { parseJsonArg }                       = require('../lib/args');
 const { apiRequest, buildUrl }               = require('../lib/http');
 const { applyFields }                        = require('../lib/fields');
+const { pollUntilTerminal }                  = require('../lib/poll');
 const { out, info, printDryRun, CLIError }   = require('../lib/output');
 
 const POLL_INTERVAL_MS = 2000;
@@ -57,7 +58,7 @@ async function cmdAgentsAsk(args) {
 
     const extra   = parseJsonArg(args.json);
     const body    = Object.assign({ question }, extra);
-    const apiPath = AGENTS_API + '/' + agentId + '/ask';
+    const apiPath = AGENTS_API + '/' + encodeURIComponent(agentId) + '/ask';
 
     if (args['dry-run']) {
         printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
@@ -65,30 +66,28 @@ async function cmdAgentsAsk(args) {
     }
 
     const submitted = await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
-    const requestId     = submitted.requestId;
-    const conversationId = submitted.conversationId;
+    const requestId = submitted.requestId;
+    if (!requestId) throw new CLIError('Agent did not return a requestId');
 
     if (args['no-wait']) {
-        out({ requestId, conversationId });
+        out(applyFields(submitted, args.fields));
         return;
     }
 
     // Poll until terminal state
     info('Submitted. requestId=' + requestId + '. Polling for result...');
-    const statusPath = AGENTS_API + '/' + agentId + '/ask/' + requestId + '/status';
-    const deadline   = Date.now() + POLL_TIMEOUT_MS;
+    const statusPath = AGENTS_API + '/' + encodeURIComponent(agentId) + '/ask/' + encodeURIComponent(requestId) + '/status';
 
-    while (Date.now() < deadline) {
-        await sleep(POLL_INTERVAL_MS);
-        const status = await apiRequest({ domain, token, method: 'GET', apiPath: statusPath });
-        if (status.status === 'COMPLETED' || status.status === 'FAILED') {
-            out(applyFields(status, args.fields));
-            return;
-        }
-        info('Status: ' + status.status + '...');
-    }
+    const final = await pollUntilTerminal({
+        fetchStatus: function() { return apiRequest({ domain, token, method: 'GET', apiPath: statusPath }); },
+        isTerminal:  function(s) { return s.status === 'COMPLETED' || s.status === 'FAILED'; },
+        intervalMs:  POLL_INTERVAL_MS,
+        timeoutMs:   POLL_TIMEOUT_MS,
+        onProgress:  function(s) { info('Status: ' + s.status + '...'); },
+        timeoutMessage: 'Timed out waiting for agent response. Use `egnyte agents status ' + agentId + ' ' + requestId + '` to check manually.',
+    });
 
-    throw new CLIError('Timed out waiting for agent response. Use `egnyte agents status ' + agentId + ' ' + requestId + '` to check manually.');
+    out(applyFields(final, args.fields));
 }
 
 // ── agents status ─────────────────────────────────────────────────────────────
@@ -106,7 +105,7 @@ async function cmdAgentsStatus(args) {
         'Usage: egnyte agents status <agentId> <requestId> [--fields responseText,citations,status]'
     );
 
-    const apiPath = AGENTS_API + '/' + agentId + '/ask/' + requestId + '/status';
+    const apiPath = AGENTS_API + '/' + encodeURIComponent(agentId) + '/ask/' + encodeURIComponent(requestId) + '/status';
 
     if (args['dry-run']) {
         printDryRun({ method: 'GET', url: buildUrl(domain, apiPath), bodyType: 'none' });
@@ -115,10 +114,6 @@ async function cmdAgentsStatus(args) {
 
     const result = await apiRequest({ domain, token, method: 'GET', apiPath });
     out(applyFields(result, args.fields));
-}
-
-function sleep(ms) {
-    return new Promise(function(resolve) { setTimeout(resolve, ms); });
 }
 
 module.exports = {

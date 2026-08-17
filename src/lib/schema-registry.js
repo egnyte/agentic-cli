@@ -540,17 +540,43 @@ const SCHEMA = {
     // ── AI ──────────────────────────────────────────────────────────────────────
 
     'ai.ask': {
-        summary:     'Ask a question via Copilot, optionally scoped to specific files or folders',
+        summary:     'Ask the AI Assistant (async: submits, then polls until a terminal status). Executions can run tool-calls that create or modify content — requires --yes or --dry-run.',
         method:      'POST',
-        endpoint:    '/pubapi/v1/ai/copilot/ask',
-        mutating:    false,
+        endpoint:    '/pubapi/v1/ai/assistant/ask',
+        mutating:    true,
         body_params: {
-            question:          { type: 'string',  required: true,  description: 'Natural-language question' },
-            selectedItems:     { type: 'object',  required: false, description: 'Files/folders to use as context: {"folders":[{"id":"..."}],"files":[{"entryId":"..."}]}' },
+            question:          { type: 'string',  required: true,  description: 'Natural-language question (max 35,000 chars)' },
+            selectedItems:     { type: 'object',  required: false, description: 'Context scope. On a fresh ask (no conversationId) the CLI sends {"allEgnyteSearch": true} — whole domain — when omitted; on conversationId follow-ups nothing is injected so the conversation keeps its scope. Or scope to files/folders: {"folders":[{"id":"..."}],"files":[{"entryId":"..."}]}' },
             includeCitations:  { type: 'boolean', required: false, description: 'Include source citations in response' },
+            conversationId:    { type: 'string',  required: false, description: 'Continue a prior conversation (multi-turn)' },
             chatHistory:       { type: 'object',  required: false, description: 'Prior conversation context: {"messages":[]}' },
+            mcpSelectionId:    { type: 'string',  required: false, description: 'MCP tool selection ID' },
+            modelDetails:      { type: 'object',  required: false, description: 'Model override: {"name":"...","version":"..."}' },
         },
-        example: "egnyte ai ask \"What are the key metrics in Q3?\" --json '{\"selectedItems\":{\"folders\":[{\"id\":\"f1\"}]},\"includeCitations\":true}'",
+        flags: {
+            'no-wait': { description: 'Return the submit response (executionId, conversationId) immediately; skip polling. Check status with ai.status.' },
+        },
+        // No response_fields: waited output is ai.status's shape, --no-wait output is the submit response (executionId/conversationId/executionStatus/truncated/actions).
+        example: 'egnyte ai ask "What are the key metrics in Q3?" --yes --fields status,responseText,citations',
+    },
+    'ai.status': {
+        summary:      'Get execution status of a prior ai ask (Assistant API)',
+        method:       'GET',
+        endpoint:     '/pubapi/v1/ai/assistant/{executionId}/status',
+        mutating:     false,
+        response_fields: {
+            status:         { type: 'string', description: 'IN_PROGRESS | COMPLETED | FAILED | AWAITING_USER_CONFIRMATION' },
+            responseText:   { type: 'string', description: 'Assistant answer (present when COMPLETED)' },
+            thoughts:       { type: 'array',  description: 'Assistant reasoning steps, in plain language' },
+            citations:      { type: 'array',  description: 'Source references' },
+            actions:        { type: 'array',  description: 'Actions taken or proposed' },
+            intent:         { type: 'string', description: 'Detected intent of the question' },
+            lastUpdated:    { type: 'integer', description: 'Unix epoch ms of the last status update' },
+            numToolCalls:   { type: 'integer', description: 'Number of tool calls made during this execution' },
+            toolCalls:      { type: 'object',  description: 'Tool calls made, keyed by call ID' },
+            pendingActions: { type: 'array',  description: 'What the assistant is waiting for (present when AWAITING_USER_CONFIRMATION)' },
+        },
+        example: 'egnyte ai status <executionId> --fields status,responseText,citations',
     },
     'ai.ask-document': {
         summary:     'Ask a question about a specific file (path auto-resolved to entry-id)',

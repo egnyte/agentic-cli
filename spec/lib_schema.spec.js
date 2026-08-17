@@ -37,7 +37,7 @@ describe("SCHEMA registry", function() {
         // Projects
         "projects.list", "projects.get", "projects.create", "projects.update", "projects.delete",
         // AI
-        "ai.ask", "ai.ask-document", "ai.summarize", "ai.ask-kb", "ai.list-kbs", "ai.hybrid-search",
+        "ai.ask", "ai.status", "ai.ask-document", "ai.summarize", "ai.ask-kb", "ai.list-kbs", "ai.hybrid-search",
         // Agents
         "agents.list", "agents.ask", "agents.status",
     ];
@@ -90,7 +90,7 @@ describe("SCHEMA registry", function() {
             "lock.get",
             "trash.list",
             "projects.list", "projects.get",
-            "ai.ask", "ai.ask-document", "ai.summarize", "ai.ask-kb", "ai.list-kbs", "ai.hybrid-search"];
+            "ai.status", "ai.ask-document", "ai.summarize", "ai.ask-kb", "ai.list-kbs", "ai.hybrid-search"];
         readOps.forEach(function(op) {
             it(op + " is non-mutating", function() {
                 expect(SCHEMA[op].mutating).toBe(false);
@@ -108,7 +108,8 @@ describe("SCHEMA registry", function() {
             "notes.add", "notes.delete",
             "lock.lock", "lock.unlock",
             "trash.restore", "trash.delete",
-            "projects.create", "projects.update", "projects.delete"];
+            "projects.create", "projects.update", "projects.delete",
+            "ai.ask"];
         writeOps.forEach(function(op) {
             it(op + " is mutating", function() {
                 expect(SCHEMA[op].mutating).toBe(true);
@@ -243,6 +244,27 @@ describe("SCHEMA registry", function() {
                 expect(SCHEMA[op].flags).toBeDefined();
                 expect(SCHEMA[op].flags.progress).toBeDefined();
                 expect(SCHEMA[op].flags["json-progress"]).toBeDefined();
+            });
+        });
+    });
+
+    // Schema truthfulness against a real Assistant API payload captured during live QA.
+    // Catches schema/API drift offline: every declared field must actually appear on a
+    // real response, and every real field must be documented.
+    describe("ai.status response_fields match a real captured payload", function() {
+        var fixture = require("./fixtures/ai-status-completed.json");
+        var declaredFields = Object.keys(SCHEMA["ai.status"].response_fields);
+
+        it("every declared field is present on the real payload, except conditional pendingActions", function() {
+            declaredFields.forEach(function(field) {
+                if (field === "pendingActions") return; // only present on AWAITING_USER_CONFIRMATION, not captured live
+                expect(fixture[field]).not.toBeUndefined("declared field '" + field + "' is missing from the real payload");
+            });
+        });
+
+        it("every field on the real payload is documented in the schema", function() {
+            Object.keys(fixture).forEach(function(field) {
+                expect(declaredFields).toContain(field, "real payload field '" + field + "' is undocumented in ai.status.response_fields");
             });
         });
     });

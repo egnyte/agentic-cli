@@ -5,6 +5,7 @@ const https = require('https');
 const { URL } = require('url');
 const { CLIError } = require('./output');
 const { buildEgnyteBaseUrl } = require('./domain');
+const { ENABLED_HEADER, isAiSafeguardedPath } = require('./ai-safeguards');
 
 const AUTH_FAILED_HINT = 'Run `egnyte login` to re-authenticate, or verify your EGNYTE_TOKEN is valid.';
 
@@ -147,6 +148,11 @@ async function apiRequest(opts) {
     const urlStr = buildUrl(domain, apiPath, query);
     const parsed = new URL(urlStr);
     const headers = { Authorization: 'Bearer ' + token };
+    // AI Safeguards: route content-serving PubAPI calls (AI, search, file content)
+    // through the safeguards facade.
+    if (isAiSafeguardedPath(apiPath)) {
+        headers[ENABLED_HEADER] = 'true';
+    }
     const normalizedMethod = String(method || 'GET').toUpperCase();
     const retryableServerErrorMethods = new Set(['GET', 'HEAD']);
     let bodyBuf;
@@ -270,6 +276,10 @@ function apiDownload(opts, outPath, resume) {
     }
 
     const reqHeaders = { Authorization: 'Bearer ' + token };
+    // AI Safeguards: downloads serve file content — route through the safeguards facade.
+    if (isAiSafeguardedPath(apiPath)) {
+        reqHeaders[ENABLED_HEADER] = 'true';
+    }
     if (startByte > 0) reqHeaders['Range'] = 'bytes=' + startByte + '-';
 
     return new Promise(function(resolve, reject) {

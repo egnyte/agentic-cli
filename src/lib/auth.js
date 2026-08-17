@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto       = require('crypto');
+const http = require('http');
 const { spawnSync } = require('child_process');
 const { CLIError, info } = require('./output');
 const { loadConfig, getProfile, setProfile } = require('./config');
@@ -82,6 +83,11 @@ async function doTokenRefresh(profile) {
 /**
  * OAuth 2.0 Authorization Code flow.
  *
+ * When useLocalhostCallback is true (default key):
+ *   - Starts a local HTTP server, captures the code automatically.
+ *
+ * When useLocalhostCallback is false (custom --client-id):
+ *   - Falls back to manual copy-paste flow with the provided redirectUri.
  * Egnyte requires a registered HTTPS redirect URI. The manual flow:
  *   1. CLI opens the browser to the Egnyte authorize page.
  *   2. User logs in and approves.
@@ -91,7 +97,7 @@ async function doTokenRefresh(profile) {
  */
 async function doOAuthLogin(opts) {
     const domain = normalizeDomain(opts.domain);
-    const { clientId, clientSecret, redirectUri } = opts;
+    const { clientId, clientSecret, useLocalhostCallback } = opts;
     const state = crypto.randomBytes(16).toString('hex');
 
     // Request every known scope so any Public API endpoint (including egnyte request)
@@ -117,6 +123,16 @@ async function doOAuthLogin(opts) {
         'Egnyte.integrations',    // Integrations
     ].join(' ');
 
+    let redirectUri, server;
+
+    if (useLocalhostCallback) {
+        const result = await startCallbackServer();
+        server      = result.server;
+        redirectUri = 'http://127.0.0.1:' + result.port + '/callback';
+    } else {
+        redirectUri = opts.redirectUri;
+    }
+
     const authUrl = buildEgnyteBaseUrl(domain) + '/puboauth/authorize?' + new URLSearchParams({
         client_id:     clientId,
         redirect_uri:  redirectUri,
@@ -131,13 +147,24 @@ async function doOAuthLogin(opts) {
     info('  ' + authUrl + '\n');
     openBrowser(authUrl);
 
-    info('Step 2 \u2014 After you approve, your browser will redirect to a URL like:');
-    info('  ' + redirectUri + '?code=XXXXXX&state=...');
-    info('\nStep 3 \u2014 Copy the value of the `code` parameter from the URL bar.');
-    info('\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n');
+    let code;
+    if (useLocalhostCallback) {
+        info('Waiting for authorization...');
+        info('\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n');
+        try {
+            code = await waitForCallback(server, state);
+        } finally {
+            server.close();
+        }
+    } else {
+        info('Step 2 \u2014 After you approve, your browser will redirect to a URL like:');
+        info('  ' + redirectUri + '?code=XXXXXX&state=...');
+        info('\nStep 3 \u2014 Copy the value of the `code` parameter from the URL bar.');
+        info('\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n');
+        code = await promptCode();
+        if (!code) throw new CLIError('No code entered. Login cancelled.');
+    }
 
-    const code = await promptCode();
-    if (!code) throw new CLIError('No code entered. Login cancelled.');
     info('\nExchanging code for token...');
 
     const body = new URLSearchParams({
@@ -184,12 +211,122 @@ function promptCode() {
     });
 }
 
+/** Start an HTTP server on a random free port. Resolves with { server, port }. */
+function startCallbackServer() {
+    return new Promise(function(resolve, reject) {
+        const server = http.createServer();
+        server.listen(0, '127.0.0.1', function() {
+            const port = server.address().port;
+            resolve({ server, port });
+        });
+        server.once('error', reject);
+    });
+}
+
+/** Render a styled HTML callback page. success=true for the happy path, false for errors. */
+function callbackPage(res, success, title, message) {
+    const icon = success
+        ? `<svg width="52" height="52" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="26" cy="26" r="26" fill="#2da44e"/>
+            <path d="M14 27l9 9 15-18" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>`
+        : `<svg width="52" height="52" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="26" cy="26" r="26" fill="#cf222e"/>
+            <path d="M17 17l18 18M35 17L17 35" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>
+          </svg>`;
+
+    const html = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Egnyte CLI</title>
+            <style>
+              body {
+                background: #f5f5f5;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+              }
+              .card {
+                background: #fff;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 40px;
+                max-width: 480px;
+                width: 100%;
+                text-align: center;
+              }
+              h1 { font-size: 20px; color: #1a1a1a; margin: 16px 0 8px; }
+              p  { font-size: 14px; color: #666; margin: 0; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              ${icon}
+              <h1>${title}</h1>
+              <p>${message}</p>
+            </div>
+          </body>
+        </html>`;
+
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(html);
+}
+
+/**
+ * Wait for GET /callback?code=XXX&state=YYY.
+ * Responds with a styled HTML page so the user can close the tab.
+ * Rejects if the state doesn't match or Egnyte returns an error param.
+ */
+function waitForCallback(server, expectedState) {
+    return new Promise(function(resolve, reject) {
+        server.on('request', function(req, res) {
+            const url    = new URL(req.url, 'http://127.0.0.1');
+            const code   = url.searchParams.get('code');
+            const state  = url.searchParams.get('state');
+            const error  = url.searchParams.get('error');
+
+            if (url.pathname !== '/callback') {
+                res.writeHead(404);
+                res.end();
+                return;
+            }
+
+            if (error) {
+                callbackPage(res, false, 'Authorization failed', 'Error: ' + error + '. You may close this tab.');
+                reject(new CLIError('Authorization failed: ' + error));
+                return;
+            }
+
+            if (state !== expectedState) {
+                callbackPage(res, false, 'Authorization failed', 'State mismatch \u2014 possible CSRF. You may close this tab.');
+                reject(new CLIError('OAuth state mismatch \u2014 possible CSRF attack.'));
+                return;
+            }
+
+            if (!code) {
+                callbackPage(res, false, 'Authorization failed', 'No code received. You may close this tab.');
+                reject(new CLIError('No authorization code received from Egnyte.'));
+                return;
+            }
+
+            callbackPage(res, true, 'Authorization complete', 'You may close this tab and check your terminal to continue.');
+            resolve(code);
+        });
+    });
+}
+
 /** Open the default browser on the current platform. */
 function openBrowser(url) {
     try {
         if (process.platform === 'win32') {
-            // 'start' is a shell built-in; run via cmd.exe with an empty title arg
-            spawnSync('cmd.exe', ['/c', 'start', '', url], { stdio: 'ignore' });
+            // rundll32 url.dll,FileProtocolHandler is the most reliable way to open
+            // a URL in the default browser on all Windows versions without shell interpretation
+            spawnSync('rundll32', ['url.dll,FileProtocolHandler', url], { stdio: 'ignore' });
         } else {
             const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
             spawnSync(cmd, [url], { stdio: 'ignore' });
@@ -199,4 +336,4 @@ function openBrowser(url) {
     }
 }
 
-module.exports = { resolveAuth, doOAuthLogin, doTokenRefresh, promptCode, openBrowser };
+module.exports = { resolveAuth, doOAuthLogin, doTokenRefresh, openBrowser, startCallbackServer, waitForCallback };

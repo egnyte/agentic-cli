@@ -261,4 +261,21 @@ describe("applyFields", function() {
         });
     });
 
+    // Real Assistant API `ai ask --no-wait` submit response, captured during live QA.
+    describe("against a real ai ask --no-wait submit response", function() {
+        var fixture = require("./fixtures/ai-ask-submit.json");
+
+        it("filters to executionId,conversationId as ai ask --no-wait --fields would", function() {
+            var result = applyFields(fixture, "executionId,conversationId");
+            expect(result).toEqual({
+                executionId: fixture.executionId,
+                conversationId: fixture.conversationId,
+            });
+        });
+
+        it("passes through unfiltered when --fields is omitted", function() {
+            expect(applyFields(fixture)).toEqual(fixture);
+        });
+    });
+
 });

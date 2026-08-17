@@ -20,51 +20,122 @@ integrationDescribe("egnyte ai", function() {
         jasmine.DEFAULT_TIMEOUT_INTERVAL = 60000; // AI calls can be slow
     });
 
-    // ── ai ask (copilot) ──────────────────────────────────────────────────────────
+    // ── ai ask (assistant) ────────────────────────────────────────────────────────
 
     describe("ai ask", function() {
-        it("--dry-run prints curl POST to /pubapi/v1/ai/copilot/ask", function() {
+        it("--dry-run prints curl POST to /pubapi/v1/ai/assistant/ask", function() {
             var result = spawnCLI(
                 ["ai", "ask", "What files were modified last week?", "--dry-run"],
                 DUMMY_OPTS
             );
             expect(result.status).toBe(0);
             expect(result.stdout).toContain("curl -X POST");
-            expect(result.stdout).toContain("/pubapi/v1/ai/copilot/ask");
+            expect(result.stdout).toContain("/pubapi/v1/ai/assistant/ask");
             expect(result.stdout).toContain("What files were modified last week?");
             expect(result.stdout).not.toContain("dummytoken123");
         });
 
-        it("--dry-run includes selectedItems when provided via --json", function() {
+        it("--dry-run body includes the explicit whole-domain default scope", function() {
+            var result = spawnCLI(
+                ["ai", "ask", "What changed?", "--dry-run"],
+                DUMMY_OPTS
+            );
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain('"allEgnyteSearch":true');
+        });
+
+        it("--json selectedItems replaces the default scope wholesale", function() {
             var result = spawnCLI(
                 ["ai", "ask", "Q3 revenue?",
                     "--json", '{"selectedItems":{"folders":[{"id":"f1"}]}}', "--dry-run"],
                 DUMMY_OPTS
             );
             expect(result.status).toBe(0);
-            expect(result.stdout).toContain("selectedItems");
+            expect(result.stdout).toContain('"folders":[{"id":"f1"}]');
+            expect(result.stdout).not.toContain("allEgnyteSearch");
+        });
+
+        it("--json conversationId alone suppresses the default scope", function() {
+            var result = spawnCLI(
+                ["ai", "ask", "Now compare that to Q2",
+                    "--json", '{"conversationId":"c1"}', "--dry-run"],
+                DUMMY_OPTS
+            );
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain('"conversationId":"c1"');
+            expect(result.stdout).not.toContain("selectedItems");
         });
 
         it("exits 1 when question is missing", function() {
-            var result = spawnCLI(["ai", "ask"], DUMMY_OPTS);
+            var result = spawnCLI(["ai", "ask", "--yes"], DUMMY_OPTS);
             expect(result.status).toBe(1);
             expect(result.errorJson().error).toMatch(/question/i);
         });
 
-        it("does NOT require --yes (AI queries are read-only)", function() {
-            var result = spawnCLI(
-                ["ai", "ask", "test question", "--dry-run"],
-                DUMMY_OPTS
-            );
-            expect(result.status).toBe(0);
+        it("requires --yes or --dry-run, and the guard error explains why", function() {
+            var result = spawnCLI(["ai", "ask", "test question"], DUMMY_OPTS);
+            expect(result.status).toBe(1);
+            var err = result.errorJson().error;
+            expect(err).toMatch(/requires confirmation/i);
+            expect(err).toMatch(/tool-calls that create or modify content/);
         });
 
-        it("schema ai.ask returns full parameter reference", function() {
+        it("guard error fires before any network call (dummy domain, no ENOTFOUND)", function() {
+            var result = spawnCLI(["ai", "ask", "test question"], DUMMY_OPTS);
+            expect(result.status).toBe(1);
+            expect(result.errorJson().error).not.toMatch(/ENOTFOUND|network|socket/i);
+        });
+
+        it("schema ai.ask reflects the Assistant endpoint and mutating flag", function() {
             var result = spawnCLI(["schema", "ai.ask"], DUMMY_OPTS);
             expect(result.status).toBe(0);
             var json = result.json();
+            expect(json.endpoint).toContain("/ai/assistant/ask");
+            expect(json.mutating).toBe(true);
             expect(json.body_params.question).toBeDefined();
             expect(json.body_params.selectedItems).toBeDefined();
+            expect(json.body_params.conversationId).toBeDefined();
+            expect(json.flags["no-wait"]).toBeDefined();
+        });
+    });
+
+    // ── ai status ────────────────────────────────────────────────────────────────
+
+    describe("ai status", function() {
+        it("--dry-run prints curl GET to /pubapi/v1/ai/assistant/<executionId>/status", function() {
+            var result = spawnCLI(["ai", "status", "exec-123", "--dry-run"], DUMMY_OPTS);
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain("curl -X GET");
+            expect(result.stdout).toContain("/pubapi/v1/ai/assistant/exec-123/status");
+            expect(result.stdout).not.toContain("dummytoken123");
+        });
+
+        it("URL-encodes the executionId in the status path", function() {
+            var result = spawnCLI(["ai", "status", "exec/../123", "--dry-run"], DUMMY_OPTS);
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain("/pubapi/v1/ai/assistant/exec%2F..%2F123/status");
+        });
+
+        it("exits 1 when executionId is missing", function() {
+            var result = spawnCLI(["ai", "status"], DUMMY_OPTS);
+            expect(result.status).toBe(1);
+            expect(result.errorJson().error).toMatch(/executionId/i);
+        });
+
+        it("does NOT require --yes (read-only operation)", function() {
+            var result = spawnCLI(["ai", "status", "exec-123", "--dry-run"], DUMMY_OPTS);
+            expect(result.status).toBe(0);
+        });
+
+        it("schema ai.status returns full parameter reference", function() {
+            var result = spawnCLI(["schema", "ai.status"], DUMMY_OPTS);
+            expect(result.status).toBe(0);
+            var json = result.json();
+            expect(json.response_fields.status).toBeDefined();
+            expect(json.response_fields.responseText).toBeDefined();
+            expect(json.response_fields.citations).toBeDefined();
+            expect(json.response_fields.toolCalls).toBeDefined();
+            expect(json.endpoint).toContain("/ai/assistant/");
         });
     });
 
@@ -335,16 +406,19 @@ integrationDescribe("egnyte ai", function() {
 
     // ── live API calls ───────────────────────────────────────────────────────────
     // These tests require the Egnyte.ai scope on the token and a file in testFolder.
+    // Assistant tool-calls can write content — live tests must only ever send
+    // read-only questions, and use --no-wait to conserve the AI rate budget
+    // (10 calls/min, 100/day per token).
 
     describe("live AI calls", function() {
-        it("ai ask returns valid JSON", function() {
+        it("ai ask --yes --no-wait submits and returns an executionId", function() {
             var result = spawnCLI(
-                ["ai", "ask", "What types of files are stored here?",
-                    "--json", JSON.stringify({ selectedItems: { folders: [], files: [] } })],
+                ["ai", "ask", "What types of files are stored here?", "--yes", "--no-wait"],
                 REAL_OPTS
             );
             expect(result.status).toBe(0);
             expect(result.stdout).toBeValidJSON();
+            expect(result.json().executionId).toBeDefined();
         });
     });
 

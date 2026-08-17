@@ -114,11 +114,8 @@ egnyte login --domain https://mycompany.egnyte.com
 
 **What happens:**
 1. Browser opens to the Egnyte authorization page.
-2. Log in and click **Allow**. Your browser redirects to a URL like:
-   ```
-   https://www.egnyte.com?code=XXXXXX&state=...
-   ```
-3. Copy the value of the `code` parameter from the URL bar and paste it in the terminal when prompted.
+2. Log in and click **Allow**. The CLI captures the authorization code automatically via a local callback server — no copy-pasting required.
+3. The token is saved and you're done.
 
 The access token is stored at `~/.config/egnyte-cli/config.json` (file mode `0600` — owner read/write only).
 If the token response omits `scope`, the CLI preserves the scopes it requested and shows the raw `scope` string in `egnyte login` / `egnyte whoami`.
@@ -137,6 +134,8 @@ EGNYTE_CLIENT_ID=YOUR_CLIENT_ID \
 EGNYTE_CLIENT_SECRET=YOUR_CLIENT_SECRET \
 egnyte login
 ```
+
+When using a custom OAuth app, the CLI falls back to the manual flow: after approving in the browser, copy the `code` value from the redirect URL and paste it in the terminal when prompted.
 
 Register your own app at [developers.egnyte.com](https://developers.egnyte.com) if needed. See the [getting started guide](https://developers.egnyte.com/api-docs/read/getting-started) for reference.
 
@@ -453,9 +452,14 @@ egnyte search advanced "NDA" \
 
 ### AI
 
+`ai ask` runs the AI Assistant, which can execute tool-calls that create or modify content — it requires `--yes` or `--dry-run`, and submits then polls until a terminal status (up to 5 minutes; use `--no-wait` to skip waiting). Every other AI command below is read-only.
+
 ```bash
-# Ask a question via Copilot (optionally scope to files or folders)
-egnyte ai ask "<question>" [--json '{}'] [--fields a,b,c]
+# Ask the AI Assistant (optionally scope to files or folders) — requires --yes or --dry-run
+egnyte ai ask "<question>" --yes [--json '{}'] [--fields status,responseText,citations]
+
+# Check a running or abandoned execution
+egnyte ai status <executionId> [--fields status,responseText,citations]
 
 # Ask about a specific file (path auto-resolved to entry-id)
 egnyte ai ask-document <path> "<question>" [--json '{}'] [--fields a,b,c]
@@ -474,11 +478,26 @@ egnyte ai hybrid-search "<query>" [--json '{}'] [--fields results]
 ```
 
 ```bash
-# Copilot question, optionally scoped to specific files or folders
-egnyte ai ask "What are the key metrics in Q3?" --fields response
-egnyte ai ask "Revenue trends?" \
+# Ask the Assistant — polls every 6 s (up to 5 min), searches the whole domain by default
+egnyte ai ask "What are the key metrics in Q3?" --yes --fields status,responseText,citations
+
+# Scope to specific files/folders (replaces the whole-domain default)
+egnyte ai ask "Revenue trends?" --yes \
   --json '{"selectedItems":{"folders":[{"id":"<folder-id>"}]},"includeCitations":true}' \
-  --fields response,citations
+  --fields status,responseText,citations
+
+# Fire-and-forget — returns executionId immediately, check status later
+egnyte ai ask "Long-running analysis" --yes --no-wait --fields executionId
+egnyte ai status <executionId> --fields status,responseText,citations
+
+# Multi-turn: continue a prior conversation
+egnyte ai ask "Now compare that to Q2" --yes \
+  --json '{"conversationId":"<id from prior response>"}' \
+  --fields status,responseText
+
+# Preview the request without executing (shows the request and its scope, not the tool-calls,
+# which the server decides at runtime)
+egnyte ai ask "What are the key metrics in Q3?" --dry-run
 
 # Ask about a specific file
 egnyte ai ask-document /Shared/Contracts/acme.pdf "What are the payment terms?" --fields response
@@ -504,7 +523,9 @@ egnyte ai hybrid-search "quarterly report" \
   --fields results
 ```
 
-All AI commands are read-only — `--yes` is not required.
+**Response status values (`ai ask` / `ai status`):** `COMPLETED` | `FAILED` | `AWAITING_USER_CONFIRMATION` — check `status` before reading `responseText`. `AWAITING_USER_CONFIRMATION` means a tool-call needs authorization that can only be granted in the Egnyte Web UI; the CLI prints `pendingActions` and exits cleanly.
+
+`ai ask` requires `--yes` or `--dry-run` — Assistant tool-calls can create or modify content. All other AI commands (`ask-document`, `summarize`, `ask-kb`, `list-kbs`, `hybrid-search`) are read-only — `--yes` is not required.
 
 ---
 
@@ -986,6 +1007,19 @@ $ egnyte fs get /Shared/../../etc/passwd
 {"error":"Invalid path — path traversal (..) detected"}
 ```
 
+### AI Safeguards
+
+Content-serving calls — AI commands (`ai *`, `agents *`), `search`, and file content
+reads (`fs download`, `fs download-by-id`, `fs get-content`) — automatically send
+`X-Egnyte-Ai-Safeguards-Enabled: true`, so server-side AI Safeguards policies
+(content redaction, result filtering) are evaluated when enabled for the domain.
+Endpoint coverage mirrors egnyte-mcp-server (CFS-74187).
+
+When AI Safeguards are active, safeguarded entries are filtered from search results
+**without updating `total_count`** — paginate by `offset` until results come back
+empty rather than counting toward the total. Downloads of safeguarded files may be
+redacted or denied.
+
 ---
 
 ## Development
@@ -1023,7 +1057,7 @@ src/
     events.js               ← events get-cursor/list
     notes.js                ← notes add/list/get/delete
     lock.js                 ← lock lock/unlock/get
-    ai.js                   ← ai ask/ask-document/summarize/ask-kb/list-kbs/hybrid-search
+    ai.js                   ← ai ask/status/ask-document/summarize/ask-kb/list-kbs/hybrid-search
     agents.js               ← agents list/ask/status (async polling, multi-turn, --no-wait)
     schema.js               ← schema --list + schema <op>
   lib/
