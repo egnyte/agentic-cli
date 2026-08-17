@@ -1,0 +1,31 @@
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  stage-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Update npm (trusted publishing + staged publishing support)
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Stage publish via OIDC
+        run: npm stage publish --access public --@egnyte:registry=https://registry.npmjs.org/
+
+      - name: Next step reminder
+        run: echo "Package staged. Approve it at npmjs.com -> Staged Packages (requires 2FA/passkey)."
