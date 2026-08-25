@@ -996,14 +996,14 @@ Every path argument is validated against six rules before any network call:
 | Rule | Example blocked input |
 |---|---|
 | Must start with `/` | `Shared/docs` |
-| No path traversal (`..`) | `/Shared/../../etc/passwd` |
+| No path traversal (`..`) | `/Shared/../../secret.txt` |
 | No pre-encoded slash | `/Shared%2Fdocs` |
 | No double-encoded characters | `/Shared%252F` |
 | No embedded query string | `/Shared?foo=bar` |
 | No null byte | `/Shared%00docs` |
 
 ```bash
-$ egnyte fs get /Shared/../../etc/passwd
+$ egnyte fs get /Shared/../../secret.txt
 {"error":"Invalid path — path traversal (..) detected"}
 ```
 
