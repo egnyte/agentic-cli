@@ -56,6 +56,7 @@ Three ways to give an AI agent access to Egnyte: a REST API, an MCP server, or t
   - [Trash](#trash)
   - [Projects](#projects)
   - [User Info](#user-info)
+  - [Version](#version)
 - [Agentic Design Principles](#agentic-design-principles)
 - [Using with Claude Code](#using-with-claude-code)
 - [Security](#security)
@@ -714,13 +715,13 @@ egnyte events get-cursor
 # Step 2 — list events from that ID
 egnyte events list --json '{"id": 12345678, "count": 20}' --fields events.id,events.action,events.actor,events.timestamp
 
-# Filtered — specific folder and event types
+# Filtered — specific folder and event category
 egnyte events list \
-  --json '{"id": 12345678, "count": 50, "folder": "/Shared", "type": "create|move|delete"}' \
+  --json '{"id": 12345678, "count": 50, "folder": "/Shared", "type": "file_system"}' \
   --fields events.id,events.action,events.actor,events.timestamp,events.data
 ```
 
-Event types: `create` | `move` | `delete` | `edit` | `lock` | `unlock` | `restore`
+Event categories: `file_system` | `note` | `permission_change` (per-event `action` values like `create`/`move`/`delete` are not valid `type` filters)
 
 ---
 
@@ -835,11 +836,29 @@ Unlike `egnyte whoami` (which reads stored credential metadata without a network
 
 ---
 
+### Version
+
+Works offline — no auth, no config, no network. `--version` (also `-v`) prints a single plain semver line whose format is frozen, so external tooling can compare it against a release tag. The flag must be the only argument: combined with anything else the CLI exits 1 instead of guessing, so a stray `-v` can never print a version and exit 0 while a command silently didn't run. Placed after a command, the token is parsed as that command's flag. `egnyte version` prints the same information as JSON, on an append-only schema: fields may be added in future releases, never removed or retyped.
+
+```bash
+egnyte --version
+# 2.1.0
+
+egnyte version
+# {
+#   "version": "2.1.0"
+# }
+```
+
+---
+
 ## Agentic Design Principles
 
 ### 1. JSON-only stdout
 
 Every response is machine-readable JSON. Errors always go to `stderr` as `{"error":"..."}`. There is no mixed prose/JSON output.
+
+Deliberate non-JSON stdout is limited to `--help`, `--dry-run` previews, and `--version` / `-v` — the latter prints a single plain semver line so `test "$(egnyte --version)" = "$TAG"` works without a JSON parser. Use `egnyte version` when you want the same information as JSON.
 
 ```bash
 # Pipe directly to jq

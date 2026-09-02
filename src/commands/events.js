@@ -26,7 +26,14 @@ async function cmdEventsList(args) {
         throw new CLIError('"id" (start event ID) is required in --json — get the latest ID first with: egnyte events get-cursor');
     }
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: EVENTS_API, query });
+    // The events API returns an empty body when no events match — normalize to the
+    // same shape as a non-empty response so callers can always read .events. With
+    // --verbose the empty body arrives wrapped as { _data: null, _ratelimit }.
+    const result = await apiRequest({ domain, token, method: 'GET', apiPath: EVENTS_API, query }) || {};
+    if (result.events === undefined) {
+        delete result._data;
+        result.events = [];
+    }
     out(applyFields(result, args.fields));
 }
 

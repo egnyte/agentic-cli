@@ -141,6 +141,22 @@ describe("egnyte schema", function() {
         });
     });
 
+    // ── schema <op> space form ────────────────────────────────────────────────────
+
+    describe("schema <op> space form", function() {
+        it("accepts the quoted space form", function() {
+            var result = spawnCLI(["schema", "events list"], DUMMY_OPTS);
+            expect(result.status).toBe(0);
+            expect(result.json().endpoint).toBe("/pubapi/v1/events");
+        });
+
+        it("accepts the two-argument form", function() {
+            var result = spawnCLI(["schema", "events", "list"], DUMMY_OPTS);
+            expect(result.status).toBe(0);
+            expect(result.json().endpoint).toBe("/pubapi/v1/events");
+        });
+    });
+
     // ── schema unknown-op ─────────────────────────────────────────────────────────
 
     describe("schema <unknown-op>", function() {

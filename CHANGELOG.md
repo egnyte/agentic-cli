@@ -1,4 +1,13 @@
+### 2.1.0
+- New command: `version` — print the CLI version as JSON (append-only schema; honors `--fields`)
+- New flag: `--version` / `-v` — print one plain semver line (frozen format for scripts); must be the only argument; works offline with no auth or config
+- Fixed `events.list` schema: `type` filter accepts event categories (`file_system`, `note`, `permission_change`), not per-event `action` values (`create`, `move`, `delete`, ...) which the API rejects; `count` documented max of 100 to match the API limit. Reported by @brodkin (GitHub PR #2).
+- `events list` now returns `{"events": []}` instead of bare `null` when no events match, so callers can always read `.events` (GitHub issue #4)
+- `schema` now accepts the space form used everywhere else (`egnyte schema events list` or `"events list"`) in addition to the dotted `events.list` (GitHub issue #4)
+- Input-validation errors (e.g. out-of-range `count`) now surface the per-field message instead of the raw backend envelope with its internal validator code (GitHub issue #4)
+
 ### 2.0.0
+- **Note:** the npm tarball for 2.0.0 contains a docs-only README fix (the path-traversal example string was changed to `secret.txt` because npm's registry content scanner rejected uploads containing the original example); the source at tag `v2.0.0` is canonical and the difference does not affect any code
 - **Breaking:** `ai ask` migrates from the synchronous Copilot endpoint (`/pubapi/v1/ai/copilot/ask`) to the asynchronous Assistant endpoint (`/pubapi/v1/ai/assistant/ask`) — the old endpoint is deprecated and will be removed by Egnyte on 2026-09-30
 - **Breaking:** `ai ask` now submits and polls for a result (every 6 s, up to 5 min) instead of returning the answer synchronously; use `--no-wait` to return immediately with an `executionId` and check later with the new `ai status <executionId>` command
 - **Breaking:** `ai ask` now requires `--yes` or `--dry-run` — Assistant executions can run tool-calls that create or modify content, so the command joins the CLI's mutation gate; the schema's `mutating` flag changes from `false` to `true` to match

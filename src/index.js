@@ -44,6 +44,7 @@ const { cmdAiAsk, cmdAiStatus, cmdAiAskDocument,
         cmdAiListKbs, cmdAiHybridSearch }        = require('./commands/ai');
 const { cmdAgentsList, cmdAgentsAsk,
         cmdAgentsStatus }                        = require('./commands/agents');
+const { VERSION, cmdVersion }                    = require('./commands/version');
 
 // ── Command dispatch table ────────────────────────────────────────────────────
 
@@ -68,6 +69,9 @@ const DISPATCH = {
 
     // User Info
     'userinfo':             cmdUserInfo,
+
+    // Version
+    'version':              cmdVersion,
 
     // Links
     'links.create':         cmdLinksCreate,
@@ -257,6 +261,10 @@ Escape Hatch:
   request <api-path> [-X METHOD] [--json '{}'] [--fields a,b]
                                          Call any Egnyte API endpoint directly
 
+Version:
+  --version | -v                         Print CLI version (plain semver; must be the only argument; offline, no auth)
+  version                                Print CLI version as JSON
+
 Discovery:
   schema --list                          List all available operations
   schema <operation>                     Full parameter reference
@@ -302,6 +310,20 @@ Examples:
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
+    // --version / -v — plain semver line, frozen format for external tooling.
+    // Checked on raw argv before parseArgs (the value-greedy parser would eat the
+    // next token) and honored only as the sole argument: combined with anything
+    // else the CLI exits 1 instead of guessing, so `egnyte -v fs delete /x --yes`
+    // can never print a version and exit 0 while the mutation silently didn't run.
+    const first = process.argv[2];
+    if (first === '--version' || first === '-v') {
+        if (process.argv.length > 3) {
+            throw new Error(first + " must be the only argument. Run: egnyte " + first);
+        }
+        process.stdout.write(VERSION + '\n');
+        return;
+    }
+
     const args  = parseArgs(process.argv.slice(2));
     const group = args._[0];
     const cmd   = args._[1];

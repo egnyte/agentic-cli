@@ -490,12 +490,12 @@ const SCHEMA = {
         mutating: false,
         query_params: {
             id:       { type: 'integer', required: true,  description: 'Start event ID — get from events get-cursor' },
-            count:    { type: 'integer', required: false, description: 'Number of events to return (default 20)' },
+            count:    { type: 'integer', required: false, description: 'Number of events to return (default 20, max 100)' },
             folder:   { type: 'string',  required: false, description: 'Filter events to a specific folder path' },
-            type:     { type: 'string',  required: false, description: 'Filter by event type(s), pipe-separated: create|move|delete|edit|lock|unlock|restore' },
+            type:     { type: 'string',  required: false, description: 'Filter by event category, pipe-separated: file_system|note|permission_change. Note: create, move, delete and similar are per-event "action" values, not categories, and are rejected here.' },
             suppress: { type: 'string',  required: false, description: 'Suppress own events: "app" (default) or "user"' },
         },
-        example: "egnyte events list --json '{\"id\":12345,\"count\":20,\"folder\":\"/Shared\",\"type\":\"create|move\"}'",
+        example: "egnyte events list --json '{\"id\":12345,\"count\":20,\"folder\":\"/Shared\",\"type\":\"file_system\"}'",
     },
 
     // ── Notes / Comments ────────────────────────────────────────────────────────

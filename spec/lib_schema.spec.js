@@ -192,6 +192,12 @@ describe("SCHEMA registry", function() {
                 expect(SCHEMA["events.list"].query_params[p]).toBeDefined();
             });
         });
+        it("events.list type filter documents valid categories, not action values", function() {
+            expect(SCHEMA["events.list"].query_params.type.description).toContain("file_system|note|permission_change");
+        });
+        it("events.list count documents the API max", function() {
+            expect(SCHEMA["events.list"].query_params.count.description).toContain("max 100");
+        });
         it("events.get-cursor uses GET", function() {
             expect(SCHEMA["events.get-cursor"].method).toBe("GET");
         });

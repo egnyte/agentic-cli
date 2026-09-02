@@ -106,6 +106,19 @@ describe('http helpers', function() {
         expect(callMethods).toEqual(['POST']);
     });
 
+    it('surfaces inputErrors msg without the internal validator code', async function() {
+        queuedResponses.push(
+            { status: 400, body: '{"formErrors":[],"inputErrors":{"count":[{"code":"ORG_HIBERNATE_VALIDATOR_CONSTRAINTS_RANGE_MESSAGE","msg":"Value must be between 1 and 100"}]}}', headers: { 'content-type': 'application/json' } }
+        );
+
+        await expectAsync(apiRequest({
+            domain: 'https://testdomain.egnyte.com',
+            token: 'token',
+            method: 'GET',
+            apiPath: '/pubapi/v1/events',
+        })).toBeRejectedWithError(CLIError, /HTTP 400: count: Value must be between 1 and 100$/);
+    });
+
     it('still retries 429 responses for mutating requests', async function() {
         queuedResponses.push(
             { status: 429, body: '{"message":"slow down"}', headers: { 'retry-after': '0', 'content-type': 'application/json' } },

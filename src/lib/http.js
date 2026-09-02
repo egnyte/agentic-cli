@@ -14,6 +14,19 @@ const AUTH_FAILED_HINT = 'Run `egnyte login` to re-authenticate, or verify your 
  * Extracts: human message, error code, request ID, context info.
  * Falls back to raw body text (truncated) when body is not JSON.
  */
+// { inputErrors: { field: [{ code, msg }] } } is the input-validation envelope used by
+// e.g. /pubapi/v1/events — keep the human msg per field, drop the internal validator code
+function _inputErrorsDetail(p) {
+    if (!p.inputErrors || typeof p.inputErrors !== 'object') return undefined;
+    const parts = [];
+    Object.entries(p.inputErrors).forEach(function(pair) {
+        (Array.isArray(pair[1]) ? pair[1] : []).forEach(function(e) {
+            if (e && e.msg) parts.push(pair[0] + ': ' + e.msg);
+        });
+    });
+    return parts.length ? parts.join('; ') : undefined;
+}
+
 function _buildApiError(statusCode, bodyBuf) {
     const bodyStr = (bodyBuf || Buffer.alloc(0)).toString().trim();
     let message = 'HTTP ' + statusCode;
@@ -24,7 +37,7 @@ function _buildApiError(statusCode, bodyBuf) {
         // Human-readable message — try common field names across Egnyte APIs
         // p.fault is the Apigee gateway error envelope: { faultstring, detail: { errorcode } }
         const detail = p.errorMessage || p.error_description || p.message || p.detail ||
-                       (p.fault && p.fault.faultstring) || undefined;
+                       (p.fault && p.fault.faultstring) || _inputErrorsDetail(p) || undefined;
         // Error code — short machine-readable string
         errorCode = p.errorCode || p.error || p.code ||
                     (p.fault && p.fault.detail && p.fault.detail.errorcode) || undefined;

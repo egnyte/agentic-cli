@@ -11,7 +11,9 @@ const { out, CLIError } = require('../lib/output');
  * This eliminates hallucination caused by stale or missing documentation.
  */
 function cmdSchema(args) {
-    const op = args._[1];
+    // Accept the space form used everywhere else ("events list", or two args) as
+    // well as the dotted registry key ("events.list")
+    const op = args._.slice(1).join('.').replace(/\s+/g, '.');
 
     if (args.list || !op) {
         out(Object.fromEntries(

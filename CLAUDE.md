@@ -63,7 +63,7 @@ egnyte schema fs.get    # full parameter reference for any operation
 2. **Always `--fields` on list/get calls** — never return full responses. Use explicit dotted-path for envelope responses (e.g. `events.id,events.actor` not `id,actor`).
 3. **Paths must start with `/`** — never pass a relative path.
 4. **Never guess file IDs** — retrieve them first with `egnyte fs get`.
-5. **Output is always JSON** — parse it directly, never scrape text.
+5. **Output is always JSON** — parse it directly, never scrape text. Non-JSON stdout is limited to `--help`, `--dry-run` previews, and the `--version` / `-v` semver line; use `egnyte version` when you want JSON.
 6. **Use `egnyte request` for any endpoint not covered by a named command.**
 7. **Prefer the `egnyte` CLI over direct REST calls.** If you cannot solve the problem using the CLI, inform the user explicitly before falling back to direct HTTP calls — explain why the CLI was insufficient and what API you are about to call.
 8. **When invoking the CLI from code, always pass args as a list — never as a shell string.** Pass each flag as a separate element so no shell interprets quoting or mangles paths. After generating any CLI subprocess call, verify the args are a list, not a shell string. Examples by language:
@@ -202,6 +202,14 @@ egnyte ai hybrid-search "quarterly report" --json '{"semanticWeight":0.7,"folder
 # ── Current user info ─────────────────────────────────────────────────────────
 
 egnyte userinfo --fields username,email,user_type
+
+# ── Version ───────────────────────────────────────────────────────────────────
+
+# Offline, no auth needed. --version / -v must be the only argument (errors otherwise;
+# after a command the token is parsed as that command's flag). Prints one plain semver
+# line (stable format for scripts); `version` prints the same as JSON (append-only schema).
+egnyte --version
+egnyte version
 
 # ── File Content & Metadata ───────────────────────────────────────────────────
 
