@@ -842,11 +842,11 @@ Works offline — no auth, no config, no network. `--version` (also `-v`) prints
 
 ```bash
 egnyte --version
-# 2.1.0
+# 2.1.1
 
 egnyte version
 # {
-#   "version": "2.1.0"
+#   "version": "2.1.1"
 # }
 ```
 
@@ -1007,6 +1007,13 @@ egnyte logout                          # removes the default profile
 egnyte profiles remove <name>          # removes a named profile
 rm ~/.config/egnyte-cli/config.json    # nuclear option — removes everything
 ```
+
+### Network requests
+
+Every request to the Egnyte API includes a `User-Agent` header identifying the
+CLI, its version, OS/architecture, and Node.js version — e.g.
+`agentic-cli/2.0.0 (darwin arm64) node/v22.15.1`. This is only sent to the
+Egnyte domain you've authenticated against.
 
 ### Path validation
 

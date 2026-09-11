@@ -1,14 +1,17 @@
 'use strict';
 
 const fs    = require('fs');
+const os    = require('os');
 const https = require('https');
 const { URL } = require('url');
 const { CLIError } = require('./output');
 const { buildEgnyteBaseUrl } = require('./domain');
 const { ENABLED_HEADER, isAiSafeguardedPath } = require('./ai-safeguards');
+const { version: CLI_VERSION } = require('../../package.json');
 
 const AUTH_FAILED_HINT = 'Run `egnyte login` to re-authenticate, or verify your EGNYTE_TOKEN is valid.';
 
+const USER_AGENT = 'agentic-cli/' + CLI_VERSION + ' (' + os.platform() + ' ' + os.arch() + ') node/' + process.version;
 /**
  * Parse an API error response body and return a structured CLIError.
  * Extracts: human message, error code, request ID, context info.
@@ -135,6 +138,7 @@ async function httpPost(url, body, contentType) {
             headers:  {
                 'Content-Type':   contentType,
                 'Content-Length': buf.length,
+                'User-Agent':     USER_AGENT,
             },
         }, function(res) {
             const chunks = [];
@@ -160,7 +164,7 @@ async function apiRequest(opts) {
     const { domain, token, method, apiPath, query, body, bodyType, raw } = opts;
     const urlStr = buildUrl(domain, apiPath, query);
     const parsed = new URL(urlStr);
-    const headers = { Authorization: 'Bearer ' + token };
+    const headers = { Authorization: 'Bearer ' + token, 'User-Agent': USER_AGENT };
     // AI Safeguards: route content-serving PubAPI calls (AI, search, file content)
     // through the safeguards facade.
     if (isAiSafeguardedPath(apiPath)) {
@@ -288,7 +292,7 @@ function apiDownload(opts, outPath, resume) {
         try { startByte = fs.statSync(outPath).size; } catch (_) {}
     }
 
-    const reqHeaders = { Authorization: 'Bearer ' + token };
+    const reqHeaders = { Authorization: 'Bearer ' + token, 'User-Agent': USER_AGENT };
     // AI Safeguards: downloads serve file content — route through the safeguards facade.
     if (isAiSafeguardedPath(apiPath)) {
         reqHeaders[ENABLED_HEADER] = 'true';
@@ -362,4 +366,4 @@ function apiDownload(opts, outPath, resume) {
     });
 }
 
-module.exports = { buildUrl, httpRequest, httpPost, apiRequest, apiDownload, setVerbose };
+module.exports = { buildUrl, httpRequest, httpPost, apiRequest, apiDownload, setVerbose, USER_AGENT };

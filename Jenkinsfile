@@ -50,6 +50,18 @@ pipeline {
             }
             steps {
                 runRelease(gitlabProjectId: 6736)
+                script {
+                    // agentic-cli-binary-release lives on a separate Jenkins controller
+                    // (desktop-jenkins, alongside the signing agents), so it cannot be
+                    // triggered directly via `build job:` - link to it instead and let a
+                    // human click Build, same approach agenticCliBinaryRelease itself uses
+                    // to link onward to agentic-cli-sign-and-publish.
+                    currentBuild.description = """${currentBuild.description ?: ''} <br />
+                    <a href="https://desktop-jenkins.egnyte-internal.com/job/agentic-cli-binary-release/">
+                      Build binaries for this release
+                    </a>
+                    """
+                }
             }
         }
     }

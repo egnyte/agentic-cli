@@ -1,3 +1,6 @@
+### 2.1.1
+- Every request now sends a `User-Agent` header identifying the CLI, its version, OS/architecture, and Node.js version (e.g. `agentic-cli/2.1.0 (darwin arm64) node/v22.15.1`)
+
 ### 2.1.0
 - New command: `version` — print the CLI version as JSON (append-only schema; honors `--fields`)
 - New flag: `--version` / `-v` — print one plain semver line (frozen format for scripts); must be the only argument; works offline with no auth or config

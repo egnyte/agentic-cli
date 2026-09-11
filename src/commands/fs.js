@@ -12,7 +12,8 @@ const { buildBodyFromRow, isBulkMode,
 const { validatePath }                   = require('../lib/validation');
 const { applyFields }                    = require('../lib/fields');
 const { apiRequest, apiDownload,
-        buildUrl, httpRequest }          = require('../lib/http');
+        buildUrl, httpRequest,
+        USER_AGENT }                     = require('../lib/http');
 const { buildMultipart }                 = require('../lib/multipart');
 const { out, info, formatDryRun, printDryRun, CLIError,
         requireConfirmation }            = require('../lib/output');
@@ -605,7 +606,7 @@ async function _doChunkedUpload(domain, token, p, localFile, chunkSize, resume, 
 
             const isFirst = (i === 0);
             const isLast  = (i === totalChunks - 1);
-            const headers = { Authorization: 'Bearer ' + token, 'Content-Length': chunk.length };
+            const headers = { Authorization: 'Bearer ' + token, 'Content-Length': chunk.length, 'User-Agent': USER_AGENT };
             if (!isFirst) { headers['x-egnyte-upload-id'] = uploadId; headers['x-egnyte-chunk-num'] = i + 1; }
             if (isLast)   { headers['x-egnyte-last-chunk'] = 'true'; }
 

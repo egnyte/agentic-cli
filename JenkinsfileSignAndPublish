@@ -1,0 +1,3 @@
+@Library(value = ['avalonlib', 'pintlib', 'seclib']) _
+
+agenticCliSignAndPublish()
