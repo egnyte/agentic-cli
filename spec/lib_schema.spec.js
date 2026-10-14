@@ -254,6 +254,47 @@ describe("SCHEMA registry", function() {
         });
     });
 
+    describe("Assistant output contract", function() {
+        it("documents conversationId as optional and available only when known", function() {
+            var field = SCHEMA["ai.status"].response_fields.conversationId;
+            expect(field.type).toBe("string");
+            expect(field.description).toContain("Optional; present when known");
+            expect(field.description).toContain("Subject to --fields");
+        });
+
+        ["ai.ask", "ai.status"].forEach(function(op) {
+            it(op + " describes a soft polling budget rather than a hard command deadline", function() {
+                var description = SCHEMA[op].flags.timeout.description;
+                expect(description).toContain("Soft polling budget in seconds");
+                expect(description).toContain("not a hard command deadline");
+                expect(description).toContain("For ai ask, starts after submission");
+                expect(description).toContain("Bounds new polls, not an in-flight status request and its retries");
+            });
+
+            it(op + " distinguishes default exit codes from opt-in wait outcomes", function() {
+                var codes = SCHEMA[op].exit_codes;
+                expect(Object.keys(codes)).toEqual(["0", "1", "2", "3"]);
+                expect(codes[0]).toContain("With --exit-status while waiting: COMPLETED");
+                expect(codes[0]).toContain("successful submission/query");
+                expect(codes[0]).toContain("including FAILED and AWAITING_USER_CONFIRMATION");
+                expect(codes[1]).toContain("local timeout without --exit-status");
+                expect(codes[1]).toContain("FAILED with --exit-status while waiting");
+                expect(codes[2]).toContain("Only with --exit-status while waiting: local timeout");
+                expect(codes[3]).toContain("Only with --exit-status while waiting: AWAITING_USER_CONFIRMATION");
+            });
+        });
+
+        it("describes timeout as a local stop, not a confirmed server state", function() {
+            [SCHEMA["ai.ask"].flags.timeout.description,
+             SCHEMA["ai.status"].flags.timeout.description,
+             SCHEMA["ai.status"].exit_codes[2],
+             SCHEMA["ai.status"].response_fields.status.description].forEach(function(description) {
+                expect(description).toContain("without cancelling the execution");
+                expect(description).toContain("server state is unknown");
+            });
+        });
+    });
+
     // Schema truthfulness against a real Assistant API payload captured during live QA.
     // Catches schema/API drift offline: every declared field must actually appear on a
     // real response, and every real field must be documented.
@@ -261,9 +302,13 @@ describe("SCHEMA registry", function() {
         var fixture = require("./fixtures/ai-status-completed.json");
         var declaredFields = Object.keys(SCHEMA["ai.status"].response_fields);
 
-        it("every declared field is present on the real payload, except conditional pendingActions", function() {
+        // pendingActions is conditional (AWAITING_USER_CONFIRMATION only, not captured live);
+        // executionId is CLI-added; conversationId is retained when known, absent in this fixture.
+        var NOT_ON_SERVER_PAYLOAD = ["pendingActions", "executionId", "conversationId"];
+
+        it("every declared field is present on the real payload, except conditional and CLI-added ones", function() {
             declaredFields.forEach(function(field) {
-                if (field === "pendingActions") return; // only present on AWAITING_USER_CONFIRMATION, not captured live
+                if (NOT_ON_SERVER_PAYLOAD.indexOf(field) !== -1) return;
                 expect(fixture[field]).not.toBeUndefined("declared field '" + field + "' is missing from the real payload");
             });
         });

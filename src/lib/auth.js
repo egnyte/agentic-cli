@@ -7,6 +7,7 @@ const { CLIError, info } = require('./output');
 const { loadConfig, getProfile, setProfile } = require('./config');
 const { httpPost } = require('./http');
 const { normalizeDomain, buildEgnyteBaseUrl } = require('./domain');
+const { resolveDesktopAppToken } = require('./desktop-keychain');
 
 /**
  * Resolve auth credentials in priority order:
@@ -33,6 +34,12 @@ async function resolveAuth(args) {
     // 3. Stored profile
     const profileName = args.profile || loadConfig().default_profile || 'default';
     const profile     = getProfile(profileName);
+
+    // No refresh path here - only the access token is ever shared with the CLI.
+    if (profile && profile.source === 'desktop_app') {
+        const token = await resolveDesktopAppToken(profile);
+        return { token, domain: normalizeDomain(profile.domain), auth_source: 'desktop_app' };
+    }
 
     if (!profile || !profile.access_token) {
         throw new CLIError(

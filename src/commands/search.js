@@ -15,7 +15,7 @@ const SEARCH_API = '/pubapi/v1/search';
  * Pagination: increment offset by count until results array is empty.
  */
 async function cmdSearch(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const query = args._[1];
     if (!query) throw new CLIError("Usage: egnyte search <query> [--json '{\"count\":25}'] [--fields name,path]");
 
@@ -25,6 +25,7 @@ async function cmdSearch(args) {
     const result = await apiRequest({
         domain,
         token,
+        auth_source,
         method:  'GET',
         apiPath: SEARCH_API,
         query:   params,
@@ -40,7 +41,7 @@ async function cmdSearch(args) {
 // Usage: egnyte search advanced "<query>" [--json '{"folder":"/Shared","modified_after":"2024-01-01"}'] [--fields name,path]
 
 async function cmdSearchAdvanced(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const query = args._[2];
     if (!query) throw new CLIError(
         'Usage: egnyte search advanced "<query>" [--json \'{"folder":"/Shared","modified_after":"2024-01-01"}\'] [--fields name,path]'
@@ -61,6 +62,7 @@ async function cmdSearchAdvanced(args) {
     const result = await apiRequest({
         domain,
         token,
+        auth_source,
         method:  'GET',
         apiPath: SEARCH_API,
         query:   params,

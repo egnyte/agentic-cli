@@ -4,13 +4,25 @@ const { resolveAuth }                        = require('../lib/auth');
 const { parseJsonArg }                       = require('../lib/args');
 const { apiRequest, buildUrl }               = require('../lib/http');
 const { applyFields }                        = require('../lib/fields');
-const { pollUntilTerminal }                  = require('../lib/poll');
 const { out, info, printDryRun, CLIError }   = require('../lib/output');
-
-const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS  = 300000; // 5 min
+const { AGENT_WAIT_FLAGS }                   = require('../lib/schema-registry');
+const { readAssistantWaitOptions, printAssistantStatus } = require('./ai');
 
 const AGENTS_API = '/pubapi/v1/ai/agents';
+
+// Plugs agents into the wait helpers shared with `ai` (flags, polling, exit codes).
+function agentWait(agentId) {
+    return {
+        cmd:         'agents',
+        label:       'agent',
+        idKey:       'requestId',
+        flags:       AGENT_WAIT_FLAGS,
+        rateWarning: false,
+        statusPath:  function(requestId) {
+            return AGENTS_API + '/' + encodeURIComponent(agentId) + '/ask/' + encodeURIComponent(requestId) + '/status';
+        },
+    };
+}
 
 // ── agents list ───────────────────────────────────────────────────────────────
 //
@@ -18,7 +30,7 @@ const AGENTS_API = '/pubapi/v1/ai/agents';
 // Usage: egnyte agents list [--json '{"sortBy":"name","sortOrder":"asc"}'] [--fields agentId,name,status]
 
 async function cmdAgentsList(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
 
     const extra  = parseJsonArg(args.json);
     if (extra.sortBy && !['name', 'createdOn'].includes(extra.sortBy)) {
@@ -29,11 +41,11 @@ async function cmdAgentsList(args) {
     const apiPath = AGENTS_API + '/list' + (qs ? '?' + qs : '');
 
     if (args['dry-run']) {
-        printDryRun({ method: 'GET', url: buildUrl(domain, AGENTS_API + '/list') + (qs ? '?' + qs : ''), bodyType: 'none' });
+        printDryRun({ method: 'GET', url: buildUrl(domain, AGENTS_API + '/list', null, auth_source) + (qs ? '?' + qs : ''), bodyType: 'none' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath });
     out(applyFields(result, args.fields));
 }
 
@@ -47,7 +59,7 @@ async function cmdAgentsList(args) {
 //          [--no-wait]   (return requestId immediately, skip polling)
 
 async function cmdAgentsAsk(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
 
     const agentId  = args._[2];
     const question = args._[3];
@@ -56,16 +68,17 @@ async function cmdAgentsAsk(args) {
         'Usage: egnyte agents ask <agentId> "<question>" [--json \'{"conversationId":"..."}\'] [--fields responseText,citations]'
     );
 
+    const wait    = readAssistantWaitOptions(args, 'ask', agentWait(agentId));
     const extra   = parseJsonArg(args.json);
     const body    = Object.assign({ question }, extra);
     const apiPath = AGENTS_API + '/' + encodeURIComponent(agentId) + '/ask';
 
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    const submitted = await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    const submitted = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     const requestId = submitted.requestId;
     if (!requestId) throw new CLIError('Agent did not return a requestId');
 
@@ -74,20 +87,8 @@ async function cmdAgentsAsk(args) {
         return;
     }
 
-    // Poll until terminal state
     info('Submitted. requestId=' + requestId + '. Polling for result...');
-    const statusPath = AGENTS_API + '/' + encodeURIComponent(agentId) + '/ask/' + encodeURIComponent(requestId) + '/status';
-
-    const final = await pollUntilTerminal({
-        fetchStatus: function() { return apiRequest({ domain, token, method: 'GET', apiPath: statusPath }); },
-        isTerminal:  function(s) { return s.status === 'COMPLETED' || s.status === 'FAILED'; },
-        intervalMs:  POLL_INTERVAL_MS,
-        timeoutMs:   POLL_TIMEOUT_MS,
-        onProgress:  function(s) { info('Status: ' + s.status + '...'); },
-        timeoutMessage: 'Timed out waiting for agent response. Use `egnyte agents status ' + agentId + ' ' + requestId + '` to check manually.',
-    });
-
-    out(applyFields(final, args.fields));
+    await printAssistantStatus({ domain, token, auth_source }, requestId, args, wait, true, undefined, agentWait(agentId));
 }
 
 // ── agents status ─────────────────────────────────────────────────────────────
@@ -96,7 +97,7 @@ async function cmdAgentsAsk(args) {
 // Usage: egnyte agents status <agentId> <requestId> [--fields responseText,citations,status]
 
 async function cmdAgentsStatus(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
 
     const agentId   = args._[2];
     const requestId = args._[3];
@@ -105,14 +106,20 @@ async function cmdAgentsStatus(args) {
         'Usage: egnyte agents status <agentId> <requestId> [--fields responseText,citations,status]'
     );
 
+    const wait    = readAssistantWaitOptions(args, 'status', agentWait(agentId));
     const apiPath = AGENTS_API + '/' + encodeURIComponent(agentId) + '/ask/' + encodeURIComponent(requestId) + '/status';
 
     if (args['dry-run']) {
-        printDryRun({ method: 'GET', url: buildUrl(domain, apiPath), bodyType: 'none' });
+        printDryRun({ method: 'GET', url: buildUrl(domain, apiPath, null, auth_source), bodyType: 'none' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath });
+    if (wait) {
+        await printAssistantStatus({ domain, token, auth_source }, requestId, args, wait, false, undefined, agentWait(agentId));
+        return;
+    }
+
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath });
     out(applyFields(result, args.fields));
 }
 

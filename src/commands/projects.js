@@ -16,16 +16,16 @@ const PROJECTS_V2_API = '/pubapi/v2/project-folders';
 // Note: Uses v2 for better pagination and structured response.
 
 async function cmdProjectsList(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const apiPath = PROJECTS_V2_API;
     const query = parseJsonArg(args.json);
 
     if (args['dry-run']) {
-        printDryRun({ method: 'GET', url: buildUrl(domain, apiPath), query });
+        printDryRun({ method: 'GET', url: buildUrl(domain, apiPath, null, auth_source), query });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath, query });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath, query });
     out(applyFields(result, args.fields));
 }
 
@@ -38,15 +38,15 @@ async function cmdProjectsGet(args) {
         throw new CLIError('Project ID is required: egnyte projects get <project_id>');
     }
 
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const apiPath = PROJECTS_V2_API + '/' + projectId;
 
     if (args['dry-run']) {
-        printDryRun({ method: 'GET', url: buildUrl(domain, apiPath) });
+        printDryRun({ method: 'GET', url: buildUrl(domain, apiPath, null, auth_source) });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath });
     out(applyFields(result, args.fields));
 }
 
@@ -55,7 +55,7 @@ async function cmdProjectsGet(args) {
 // If templateFolderId is present, we use v2. Otherwise, we assume v1.
 
 async function cmdProjectsCreate(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -72,10 +72,10 @@ async function cmdProjectsCreate(args) {
                 return { label: String(body.name), body: body, apiPath: isTemplate ? PROJECTS_V2_API : PROJECTS_V1_API };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, task.apiPath), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, task.apiPath, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                return await apiRequest({ domain, token, method: 'POST', apiPath: task.apiPath, body: task.body, bodyType: 'json' });
+                return await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: task.apiPath, body: task.body, bodyType: 'json' });
             },
         });
         if (summary) out(summary);
@@ -102,11 +102,11 @@ async function cmdProjectsCreate(args) {
 
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     out(result);
 }
 
@@ -114,7 +114,7 @@ async function cmdProjectsCreate(args) {
 // Note: Uses v2 PATCH for metadata updates.
 
 async function cmdProjectsUpdate(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -130,10 +130,10 @@ async function cmdProjectsUpdate(args) {
                 return { label: String(projectId), id: projectId, body: body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'PATCH', url: buildUrl(domain, PROJECTS_V2_API + '/' + task.id), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'PATCH', url: buildUrl(domain, PROJECTS_V2_API + '/' + task.id, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'PATCH', apiPath: PROJECTS_V2_API + '/' + task.id, body: task.body, bodyType: 'json' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'PATCH', apiPath: PROJECTS_V2_API + '/' + task.id, body: task.body, bodyType: 'json' });
                 return result || { status: 'updated', id: task.id };
             },
         });
@@ -155,11 +155,11 @@ async function cmdProjectsUpdate(args) {
     requireConfirmation(args);
 
     if (args['dry-run']) {
-        printDryRun({ method: 'PATCH', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'PATCH', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'PATCH', apiPath, body, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, auth_source, method: 'PATCH', apiPath, body, bodyType: 'json' });
     out(result || { status: 'updated', id: projectId });
 }
 
@@ -167,7 +167,7 @@ async function cmdProjectsUpdate(args) {
 // Note: Uses v2 DELETE. This demotes the folder back to a normal folder.
 
 async function cmdProjectsDelete(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -181,10 +181,10 @@ async function cmdProjectsDelete(args) {
                 return { label: String(projectId), id: projectId };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'DELETE', url: buildUrl(domain, PROJECTS_V2_API + '/' + task.id) });
+                return formatDryRun({ method: 'DELETE', url: buildUrl(domain, PROJECTS_V2_API + '/' + task.id, null, auth_source) });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'DELETE', apiPath: PROJECTS_V2_API + '/' + task.id });
+                const result = await apiRequest({ domain, token, auth_source, method: 'DELETE', apiPath: PROJECTS_V2_API + '/' + task.id });
                 return result || { status: 'deleted', id: task.id };
             },
         });
@@ -201,11 +201,11 @@ async function cmdProjectsDelete(args) {
     requireConfirmation(args);
 
     if (args['dry-run']) {
-        printDryRun({ method: 'DELETE', url: buildUrl(domain, apiPath) });
+        printDryRun({ method: 'DELETE', url: buildUrl(domain, apiPath, null, auth_source) });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'DELETE', apiPath });
+    const result = await apiRequest({ domain, token, auth_source, method: 'DELETE', apiPath });
     out(result || { status: 'deleted', id: projectId });
 }
 

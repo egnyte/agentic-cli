@@ -13,7 +13,7 @@ const { validatePath }                   = require('../lib/validation');
 const { applyFields }                    = require('../lib/fields');
 const { apiRequest, apiDownload,
         buildUrl, httpRequest,
-        USER_AGENT }                     = require('../lib/http');
+        USER_AGENT, buildAuth }          = require('../lib/http');
 const { buildMultipart }                 = require('../lib/multipart');
 const { out, info, formatDryRun, printDryRun, CLIError,
         requireConfirmation }            = require('../lib/output');
@@ -84,8 +84,8 @@ function buildFsActionBody(row) {
 }
 
 // Resolve a file path to its entry_id via fs metadata.
-async function resolveEntryId(domain, token, filePath) {
-    const meta = await apiRequest({ domain, token, method: 'GET', apiPath: FS_API + filePath });
+async function resolveEntryId(auth, filePath) {
+    const meta = await apiRequest({ ...auth, method: 'GET', apiPath: FS_API + filePath });
     const entryId = meta.entry_id || (meta.versions && meta.versions[0] && meta.versions[0].entry_id);
     if (!entryId) throw new CLIError('Could not resolve entry_id for: ' + filePath);
     return entryId;
@@ -94,20 +94,20 @@ async function resolveEntryId(domain, token, filePath) {
 // ── fs get ────────────────────────────────────────────────────────────────────
 
 async function cmdFsGet(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const p = args._[2];
     if (!p) throw new CLIError("Usage: egnyte fs get <path> [--json '{}'] [--fields name,path]");
     validatePath(p);
 
     const query  = parseJsonArg(args.json);
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: FS_API + p, query });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: FS_API + p, query });
     out(applyFields(result, args.fields));
 }
 
 // ── fs action ─────────────────────────────────────────────────────────────────
 
 async function cmdFsAction(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -123,10 +123,10 @@ async function cmdFsAction(args) {
                 return { label: p, path: p, body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
                 return result || { status: 'ok', action: task.body.action, path: task.path };
             },
         });
@@ -144,18 +144,18 @@ async function cmdFsAction(args) {
     const apiPath = FS_API + p;
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     out(result || { status: 'ok', action: body.action, path: p });
 }
 
 // ── fs mkdir ──────────────────────────────────────────────────────────────────
 
 async function cmdFsMkdir(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -170,10 +170,10 @@ async function cmdFsMkdir(args) {
                 return { label: p, path: p, body: { action: 'add_folder' } };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                await apiRequest({ domain, token, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
+                await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
                 return { status: 'created', path: task.path };
             },
         });
@@ -189,11 +189,11 @@ async function cmdFsMkdir(args) {
     const body    = { action: 'add_folder' };
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     out({ status: 'created', path: p });
 }
 
@@ -203,7 +203,7 @@ async function cmdFsMkdir(args) {
 // directory with a different name.
 
 async function cmdFsRename(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -221,10 +221,10 @@ async function cmdFsRename(args) {
                 return { label: p + ' -> ' + destination, path: p, destination: destination, body: { action: 'move', destination: destination } };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                await apiRequest({ domain, token, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
+                await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
                 return { status: 'renamed', from: task.path, to: task.destination };
             },
         });
@@ -245,18 +245,18 @@ async function cmdFsRename(args) {
     const body    = { action: 'move', destination };
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     out({ status: 'renamed', from: p, to: destination });
 }
 
 // ── fs move ───────────────────────────────────────────────────────────────────
 
 async function cmdFsMove(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -273,10 +273,10 @@ async function cmdFsMove(args) {
                 return { label: p + ' -> ' + to, path: p, to: to, body: { action: 'move', destination: to } };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                await apiRequest({ domain, token, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
+                await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
                 return { status: 'moved', from: task.path, to: task.to };
             },
         });
@@ -294,18 +294,18 @@ async function cmdFsMove(args) {
     const body    = { action: 'move', destination: to };
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     out({ status: 'moved', from: p, to });
 }
 
 // ── fs copy ───────────────────────────────────────────────────────────────────
 
 async function cmdFsCopy(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -322,10 +322,10 @@ async function cmdFsCopy(args) {
                 return { label: p + ' -> ' + to, path: p, to: to, body: { action: 'copy', destination: to } };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                await apiRequest({ domain, token, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
+                await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: FS_API + task.path, body: task.body, bodyType: 'json' });
                 return { status: 'copied', from: task.path, to: task.to };
             },
         });
@@ -343,18 +343,18 @@ async function cmdFsCopy(args) {
     const body    = { action: 'copy', destination: to };
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     out({ status: 'copied', from: p, to });
 }
 
 // ── fs delete ─────────────────────────────────────────────────────────────────
 
 async function cmdFsDelete(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -369,10 +369,10 @@ async function cmdFsDelete(args) {
                 return { label: p, path: p };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'DELETE', url: buildUrl(domain, FS_API + task.path) });
+                return formatDryRun({ method: 'DELETE', url: buildUrl(domain, FS_API + task.path, null, auth_source) });
             },
             executeTask: async function(task) {
-                await apiRequest({ domain, token, method: 'DELETE', apiPath: FS_API + task.path });
+                await apiRequest({ domain, token, auth_source, method: 'DELETE', apiPath: FS_API + task.path });
                 return { status: 'deleted', path: task.path };
             },
         });
@@ -387,18 +387,18 @@ async function cmdFsDelete(args) {
     const apiPath = FS_API + p;
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'DELETE', url: buildUrl(domain, apiPath) });
+        printDryRun({ method: 'DELETE', url: buildUrl(domain, apiPath, null, auth_source) });
         return;
     }
 
-    await apiRequest({ domain, token, method: 'DELETE', apiPath });
+    await apiRequest({ domain, token, auth_source, method: 'DELETE', apiPath });
     out({ status: 'deleted', path: p });
 }
 
 // ── fs upload ─────────────────────────────────────────────────────────────────
 
 async function cmdFsUpload(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -415,12 +415,12 @@ async function cmdFsUpload(args) {
                 return { label: localFile + ' -> ' + p, path: p, localFile: localFile };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_CONTENT_API + task.path), bodyType: 'multipart', localFile: task.localFile });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_CONTENT_API + task.path, null, auth_source), bodyType: 'multipart', localFile: task.localFile });
             },
             executeTask: async function(task) {
                 emitTransferProgress(args, { type: 'start', operation: 'upload', label: task.label });
                 const multipart = buildMultipart(task.localFile);
-                const result = await apiRequest({ domain, token, method: 'POST', apiPath: FS_CONTENT_API + task.path, body: multipart, bodyType: 'multipart' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: FS_CONTENT_API + task.path, body: multipart, bodyType: 'multipart' });
                 emitTransferProgress(args, { type: 'complete', operation: 'upload', label: task.label });
                 return result || { status: 'uploaded', path: task.path };
             },
@@ -438,13 +438,13 @@ async function cmdFsUpload(args) {
     const apiPath = FS_CONTENT_API + p;
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), bodyType: 'multipart', localFile });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), bodyType: 'multipart', localFile });
         return;
     }
 
     emitTransferProgress(args, { type: 'start', operation: 'upload', label: localFile + ' -> ' + p });
     const multipart = buildMultipart(localFile);
-    const result    = await apiRequest({ domain, token, method: 'POST', apiPath, body: multipart, bodyType: 'multipart' });
+    const result    = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body: multipart, bodyType: 'multipart' });
     emitTransferProgress(args, { type: 'complete', operation: 'upload', label: localFile + ' -> ' + p });
     out(result || { status: 'uploaded', path: p });
 }
@@ -452,7 +452,7 @@ async function cmdFsUpload(args) {
 // ── fs download ───────────────────────────────────────────────────────────────
 
 async function cmdFsDownload(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         const rows = loadBulkRows(args);
         const summary = await runBulkOperation({
@@ -468,13 +468,14 @@ async function cmdFsDownload(args) {
                 return { label: p + ' -> ' + outFile, path: p, outFile: outFile, resume: resume };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'GET', url: buildUrl(domain, FS_CONTENT_API + task.path) });
+                return formatDryRun({ method: 'GET', url: buildUrl(domain, FS_CONTENT_API + task.path, null, auth_source) });
             },
             executeTask: async function(task) {
                 emitTransferProgress(args, { type: 'start', operation: 'download', label: task.label });
                 await apiDownload({
                     domain,
                     token,
+                    auth_source,
                     apiPath: FS_CONTENT_API + task.path,
                     onProgress: function(progress) {
                         emitTransferProgress(args, {
@@ -504,6 +505,7 @@ async function cmdFsDownload(args) {
     await apiDownload({
         domain,
         token,
+        auth_source,
         apiPath: FS_CONTENT_API + p,
         onProgress: function(progress) {
             emitTransferProgress(args, {
@@ -523,7 +525,7 @@ async function cmdFsDownload(args) {
 // ── fs download-by-id ─────────────────────────────────────────────────────────
 
 async function cmdFsDownloadById(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const id      = args._[2];
     const outFile = args.out;
     if (!id || !outFile) throw new CLIError('Usage: egnyte fs download-by-id <id> --out <local-path> [--resume]');
@@ -532,6 +534,7 @@ async function cmdFsDownloadById(args) {
     await apiDownload({
         domain,
         token,
+        auth_source,
         apiPath: FS_CONTENT_API + '/ids/file/' + id,
         onProgress: function(progress) {
             emitTransferProgress(args, {
@@ -562,7 +565,8 @@ const CHUNKED_DEFAULT_SIZE = 10 * 1024 * 1024; // 10 MB
 
 // Core chunked upload — shared by single-command path and bulk executeTask.
 // Returns the final result object { status, path, size, chunks }.
-async function _doChunkedUpload(domain, token, p, localFile, chunkSize, resume, args) {
+async function _doChunkedUpload(auth, p, localFile, chunkSize, resume, args) {
+    const { domain, token, auth_source } = auth;
     const chunkedApiPath = FS_CHUNKED_API + p;
     const totalSize = fs.statSync(localFile).size;
     if (totalSize === 0) throw new CLIError('File is empty: ' + localFile);
@@ -573,7 +577,7 @@ async function _doChunkedUpload(domain, token, p, localFile, chunkSize, resume, 
 
     if (totalChunks === 1) {
         const multipart = buildMultipart(localFile);
-        const result = await apiRequest({ domain, token, method: 'POST', apiPath: FS_CONTENT_API + p, body: multipart, bodyType: 'multipart' });
+        const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: FS_CONTENT_API + p, body: multipart, bodyType: 'multipart' });
         emitTransferProgress(args, { type: 'complete', operation: 'upload-chunked', label: localFile + ' -> ' + p });
         return Object.assign({ status: 'uploaded', path: p, size: totalSize, chunks: 1 }, result || {});
     }
@@ -593,7 +597,8 @@ async function _doChunkedUpload(domain, token, p, localFile, chunkSize, resume, 
         }
     }
 
-    const parsed = new URL(buildUrl(domain, chunkedApiPath));
+    const chunkAuth = buildAuth(token, auth_source, chunkedApiPath);
+    const parsed = new URL(buildUrl(domain, chunkAuth.apiPath));
     const CHUNK_TIMEOUT_MS = 5 * 60 * 1000;
     const fd = fs.openSync(localFile, 'r');
 
@@ -606,7 +611,7 @@ async function _doChunkedUpload(domain, token, p, localFile, chunkSize, resume, 
 
             const isFirst = (i === 0);
             const isLast  = (i === totalChunks - 1);
-            const headers = { Authorization: 'Bearer ' + token, 'Content-Length': chunk.length, 'User-Agent': USER_AGENT };
+            const headers = { Authorization: chunkAuth.authorization, 'Content-Length': chunk.length, 'User-Agent': USER_AGENT };
             if (!isFirst) { headers['x-egnyte-upload-id'] = uploadId; headers['x-egnyte-chunk-num'] = i + 1; }
             if (isLast)   { headers['x-egnyte-last-chunk'] = 'true'; }
 
@@ -636,7 +641,7 @@ async function _doChunkedUpload(domain, token, p, localFile, chunkSize, resume, 
 }
 
 async function cmdFsUploadChunked(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -658,7 +663,7 @@ async function cmdFsUploadChunked(args) {
             formatDryRun: function(task) {
                 const totalSize = fs.existsSync(task.localFile) ? fs.statSync(task.localFile).size : 0;
                 const totalChunks = totalSize > 0 ? Math.ceil(totalSize / task.chunkSize) : 1;
-                const url = buildUrl(domain, FS_CHUNKED_API + task.path);
+                const url = buildUrl(domain, FS_CHUNKED_API + task.path, null, auth_source);
                 const lines = ['# Chunked upload: ' + task.localFile + ' (' + totalSize + ' bytes) -> ' + totalChunks + ' chunk(s) of ' + task.chunkSize + ' bytes'];
                 for (let i = 0; i < totalChunks; i++) {
                     const isFirst = i === 0;
@@ -680,7 +685,7 @@ async function cmdFsUploadChunked(args) {
                 return lines.join('\n');
             },
             executeTask: async function(task) {
-                return _doChunkedUpload(domain, token, task.path, task.localFile, task.chunkSize, task.resume, args);
+                return _doChunkedUpload({ domain, token, auth_source }, task.path, task.localFile, task.chunkSize, task.resume, args);
             },
         });
         if (summary) out(summary);
@@ -706,7 +711,7 @@ async function cmdFsUploadChunked(args) {
     if (args['dry-run']) {
         const totalSize   = fs.existsSync(localFile) ? fs.statSync(localFile).size : 0;
         const totalChunks = totalSize > 0 ? Math.ceil(totalSize / chunkSize) : 1;
-        const url         = buildUrl(domain, chunkedApiPath);
+        const url         = buildUrl(domain, chunkedApiPath, null, auth_source);
         const lines = [];
         for (let i = 0; i < totalChunks; i++) {
             const isFirst  = i === 0;
@@ -734,7 +739,7 @@ async function cmdFsUploadChunked(args) {
         return;
     }
 
-    const result = await _doChunkedUpload(domain, token, p, localFile, chunkSize, !!args.resume, args);
+    const result = await _doChunkedUpload({ domain, token, auth_source }, p, localFile, chunkSize, !!args.resume, args);
     out(result);
 }
 
@@ -747,7 +752,7 @@ async function cmdFsUploadChunked(args) {
 // Usage: egnyte fs get-content <path> [--json '{"offset":0,"limit":5000}']
 
 async function cmdFsGetContent(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const p = args._[2];
     if (!p) throw new CLIError("Usage: egnyte fs get-content <path> [--json '{\"offset\":0,\"limit\":5000}']");
     validatePath(p);
@@ -755,7 +760,7 @@ async function cmdFsGetContent(args) {
     const query   = parseJsonArg(args.json);
     const apiPath = FS_CONTENT_API + p;
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath, query, raw: true });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath, query, raw: true });
     out(applyFields(result, args.fields));
 }
 
@@ -766,9 +771,9 @@ async function cmdFsGetContent(args) {
 // Usage: egnyte fs list-metadata-namespaces [--fields namespace,fields]
 
 async function cmdFsListMetadataNamespaces(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: PROPS_API });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: PROPS_API });
     out(applyFields(result, args.fields));
 }
 
@@ -780,7 +785,7 @@ async function cmdFsListMetadataNamespaces(args) {
 //        egnyte fs set-metadata <path> --json '{"namespace":"contract","values":{"status":"signed"}}' --yes
 
 async function cmdFsSetMetadata(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -803,12 +808,12 @@ async function cmdFsSetMetadata(args) {
             },
             formatDryRun: function(task) {
                 return '# path: ' + task.path + ' (entry_id resolved at execution time)\n' +
-                    formatDryRun({ method: 'PUT', url: buildUrl(domain, FS_IDS_API + '/<entry-id>/properties/' + task.namespace), body: task.values, bodyType: 'json' });
+                    formatDryRun({ method: 'PUT', url: buildUrl(domain, FS_IDS_API + '/<entry-id>/properties/' + task.namespace, null, auth_source), body: task.values, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const entryId = await resolveEntryId(domain, token, task.path);
+                const entryId = await resolveEntryId({ domain, token, auth_source }, task.path);
                 const apiPath = FS_IDS_API + '/' + entryId + '/properties/' + task.namespace;
-                const result = await apiRequest({ domain, token, method: 'PUT', apiPath: apiPath, body: task.values, bodyType: 'json' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'PUT', apiPath: apiPath, body: task.values, bodyType: 'json' });
                 return applyFields(result || { status: 'ok', path: task.path, namespace: task.namespace }, args.fields);
             },
         });
@@ -830,13 +835,13 @@ async function cmdFsSetMetadata(args) {
 
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'PUT', url: buildUrl(domain, FS_IDS_API + '/<entry-id>/properties/' + namespace), body: values, bodyType: 'json' });
+        printDryRun({ method: 'PUT', url: buildUrl(domain, FS_IDS_API + '/<entry-id>/properties/' + namespace, null, auth_source), body: values, bodyType: 'json' });
         return;
     }
 
-    const entryId = await resolveEntryId(domain, token, p);
+    const entryId = await resolveEntryId({ domain, token, auth_source }, p);
     const apiPath = FS_IDS_API + '/' + entryId + '/properties/' + namespace;
-    const result  = await apiRequest({ domain, token, method: 'PUT', apiPath, body: values, bodyType: 'json' });
+    const result  = await apiRequest({ domain, token, auth_source, method: 'PUT', apiPath, body: values, bodyType: 'json' });
     out(applyFields(result || { status: 'ok', path: p, namespace }, args.fields));
 }
 

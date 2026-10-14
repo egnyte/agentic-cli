@@ -192,6 +192,37 @@ egnyte profiles remove staging
 
 If a stored token is within 5 minutes of expiry and a `refresh_token` is present, the CLI silently refreshes it before the request.
 
+### Desktop App-managed profiles
+
+If Egnyte Desktop App writes a profile with `"source": "desktop_app"` into `config.json`, the CLI resolves the token via the `@egnyte/keyring` native library — reading the macOS Keychain or Windows Credential Manager entry Desktop App wrote, in-process — instead of reading a stored `access_token`. No separate login is needed for accounts already signed into Desktop App. The token itself is never stored in `config.json`; only a `domain` and an opaque `desktopCtx` object (platform-specific, passed straight through to the library) are written there:
+
+```json
+{
+  "profiles": {
+    "da-admin@test.egnyte.com": {
+      "domain": "https://test.egnyte.com",
+      "source": "desktop_app",
+      "desktopCtx": { "accountId": "...", "username": "...", "domain": "..." }
+    }
+  }
+}
+```
+
+`@egnyte/keyring` is an internal native addon supplied by the official macOS/Windows installers, not an npm dependency of the CLI. The binary build pins it in `pint-jenkins/resources/agenticCli/keyring/package.json` and its lockfile, copies its JavaScript into the build, and ships the native addon next to the executable. Use the installer rather than copying only the executable.
+
+Regular npm installs and Linux builds do not include the addon. Other authentication methods remain available, but selecting a `desktop_app` profile fails clearly when the addon cannot be loaded; it does not automatically fall back to another profile or login method.
+
+On macOS, reading Desktop App's Keychain item also requires the matching Keychain access-group entitlement and an embedded provisioning profile authorized for the signing certificate. Use the signed CLI app bundle installed by the official installer. Installing the addon under ordinary `node` does not grant these permissions and the lookup fails with native status `-34018`. Windows uses Credential Manager instead and does not have the macOS entitlement requirement.
+
+For internal development in a local CLI checkout, install the version pinned by the binary build (currently `1.0.0`) without saving a dependency. This requires access to the internal registry:
+
+```bash
+npm install --no-save @egnyte/keyring@1.0.0 \
+  --@egnyte:registry=https://nexus3.egnyte-internal.com/repository/integrations-nexus/
+```
+
+Run this after installing the CLI's declared dependencies: `npm ci` removes the manually installed addon, and other install/prune operations may remove it too. This only affects the local checkout, not a separate global CLI installation, and does not bypass macOS signing requirements. Unit tests use a mock addon and do not require the native library.
+
 ---
 
 ## Common Use Cases
@@ -243,7 +274,7 @@ egnyte perms set-group /Shared/Finance --json '{"groups":{"Engineering":"Viewer"
 
 ## Commands
 
-Every command outputs JSON to `stdout`. Errors are written as `{"error":"..."}` to `stderr`. Exit code is `0` on success, `1` on error.
+Every command outputs JSON to `stdout`. Errors are written as `{"error":"..."}` to `stderr`. Exit code is `0` on success, `1` on error — `ai ask` and `ai status --wait` additionally support outcome codes via `--exit-status` (see below).
 
 ### Global flags
 
@@ -260,6 +291,37 @@ Every command outputs JSON to `stdout`. Errors are written as `{"error":"..."}` 
 | `--json-progress` | Newline-delimited JSON progress events on `stderr` |
 | `--profile <name>` | Use a named profile instead of the default |
 | `--token` / `--domain` | Override stored credentials for one call |
+
+### Assistant polling & exit codes
+
+`ai ask` submits work that runs server-side and polls for the result; `ai status <executionId>` checks it once, or resumes checking with `--wait`.
+
+| Flag | Applies to | Default |
+|---|---|---|
+| `--no-wait` | `ai ask` | off — waits for the result |
+| `--wait` | `ai status` | off — single check |
+| `--timeout <s>` / `--poll-interval <s>` | while waiting | `300` / `6` |
+| `--exit-status` | while waiting | off |
+
+Wait-only flags are rejected with `--no-wait` or on a bare `ai status`. Boolean flags take no value. Time values must be whole seconds from 1 to 86400, supplied as separate arguments (`--timeout 120`). Intervals below 6s may exceed the AI API budget of 10 calls/min.
+
+`--timeout` is a **soft polling budget**, not a hard command deadline. For `ai ask`, it starts after submission; `ai status --wait` starts the budget with its immediate status check. Sleeps are clamped and no new poll starts once the budget expires, but an in-flight HTTP request and its retries may finish later. The command can therefore take longer than `--timeout` seconds.
+
+A late completed, failed or paused response is returned normally; a late API error retains its diagnostics and exit code `1`. A late non-terminal response leads to local `TIMEOUT`, without another poll. Unrecognised statuses keep polling within the budget.
+
+Status results include `executionId` and `conversationId` when known, **before normal `--fields` filtering**. On local timeout the result is `{"status":"TIMEOUT","executionId":"…"}` (plus a known `conversationId`), also subject to `--fields`. Include the IDs and `status` in your filter if you need them. A timeout stops the CLI wait, not the execution. To check again, use the same executionId, profile and desired flags; no new `ask` is needed.
+
+| Outcome | Exit (default) | Exit with `--exit-status` |
+|---|---|---|
+| `COMPLETED` | `0` | `0` |
+| `FAILED` | `0` | `1` — payload on stdout |
+| Paused (`AWAITING_USER_CONFIRMATION`) | `0` | `3` |
+| Timed out | `1` | `2` |
+| CLI / API error | `1` | `1` |
+
+Bare `ai status` is a query: exit 0 means a valid status was retrieved, not that the execution completed. For a paused execution, inspect `--fields status,pendingActions,toolCalls`, show the pending question/actions and stop; the CLI cannot answer for the user. `--wait` resumes checking, not the paused execution. Use `conversationId`, not `executionId`, when submitting a follow-up question.
+
+`egnyte schema ai.ask` / `egnyte schema ai.status` describe these flags and codes for automation.
 
 ---
 
@@ -459,8 +521,8 @@ egnyte search advanced "NDA" \
 # Ask the AI Assistant (optionally scope to files or folders) — requires --yes or --dry-run
 egnyte ai ask "<question>" --yes [--json '{}'] [--fields status,responseText,citations]
 
-# Check a running or abandoned execution
-egnyte ai status <executionId> [--fields status,responseText,citations]
+# Check a running or abandoned execution (add --wait to poll until it stops)
+egnyte ai status <executionId> [--wait] [--fields status,responseText,citations]
 
 # Ask about a specific file (path auto-resolved to entry-id)
 egnyte ai ask-document <path> "<question>" [--json '{}'] [--fields a,b,c]
@@ -490,6 +552,9 @@ egnyte ai ask "Revenue trends?" --yes \
 # Fire-and-forget — returns executionId immediately, check status later
 egnyte ai ask "Long-running analysis" --yes --no-wait --fields executionId
 egnyte ai status <executionId> --fields status,responseText,citations
+
+# Resume checking, with a custom budget and outcome exit codes
+egnyte ai status <executionId> --wait --timeout 600 --poll-interval 10 --exit-status --fields executionId,conversationId,status,responseText,citations
 
 # Multi-turn: continue a prior conversation
 egnyte ai ask "Now compare that to Q2" --yes \
@@ -524,7 +589,7 @@ egnyte ai hybrid-search "quarterly report" \
   --fields results
 ```
 
-**Response status values (`ai ask` / `ai status`):** `COMPLETED` | `FAILED` | `AWAITING_USER_CONFIRMATION` — check `status` before reading `responseText`. `AWAITING_USER_CONFIRMATION` means a tool-call needs authorization that can only be granted in the Egnyte Web UI; the CLI prints `pendingActions` and exits cleanly.
+**Statuses and exit codes** for `ai ask` / `ai status` are covered in [Assistant polling & exit codes](#assistant-polling--exit-codes). Check `status` before reading `responseText`.
 
 `ai ask` requires `--yes` or `--dry-run` — Assistant tool-calls can create or modify content. All other AI commands (`ask-document`, `summarize`, `ask-kb`, `list-kbs`, `hybrid-search`) are read-only — `--yes` is not required.
 
@@ -842,11 +907,11 @@ Works offline — no auth, no config, no network. `--version` (also `-v`) prints
 
 ```bash
 egnyte --version
-# 2.1.1
+# 2.2.0
 
 egnyte version
 # {
-#   "version": "2.1.1"
+#   "version": "2.2.0"
 # }
 ```
 

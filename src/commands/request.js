@@ -24,7 +24,7 @@ const { out, formatDryRun, printDryRun, CLIError, requireConfirmation } = requir
  *   egnyte request /pubapi/v1/fs/Shared/report.pdf -X DELETE --dry-run
  */
 async function cmdRequest(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const defaultMethod  = (args.X || args.method || 'GET').toUpperCase();
     const MUTATING = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
@@ -57,12 +57,13 @@ async function cmdRequest(args) {
                 };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: task.method, url: buildUrl(domain, task.apiPath, task.query), body: task.body, bodyType: task.bodyType });
+                return formatDryRun({ method: task.method, url: buildUrl(domain, task.apiPath, task.query, auth_source), body: task.body, bodyType: task.bodyType });
             },
             executeTask: async function(task) {
                 return applyFields(await apiRequest({
                     domain,
                     token,
+                    auth_source,
                     method: task.method,
                     apiPath: task.apiPath,
                     query: task.query,
@@ -106,11 +107,11 @@ async function cmdRequest(args) {
 
     if (isMutating) requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method, url: buildUrl(domain, apiPath, query), body, bodyType });
+        printDryRun({ method, url: buildUrl(domain, apiPath, query, auth_source), body, bodyType });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method, apiPath, query, body, bodyType });
+    const result = await apiRequest({ domain, token, auth_source, method, apiPath, query, body, bodyType });
     out(applyFields(result, args.fields));
 }
 

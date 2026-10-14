@@ -16,9 +16,9 @@ const TRASH_V2_API = '/pubapi/v2/fs/trash';
 // Note: Uses v2 for better filtering and pagination features.
 
 async function cmdTrashList(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const query  = parseJsonArg(args.json);
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: TRASH_V2_API, query });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: TRASH_V2_API, query });
     out(applyFields(result, args.fields));
 }
 
@@ -26,7 +26,7 @@ async function cmdTrashList(args) {
 // Note: Uses v1 for RESTORE action as per public API documentation.
 
 async function cmdTrashRestore(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -41,10 +41,10 @@ async function cmdTrashRestore(args) {
                 return { label: body.ids.join(','), body: body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, TRASH_V1_API), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, TRASH_V1_API, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'POST', apiPath: TRASH_V1_API, body: task.body, bodyType: 'json' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: TRASH_V1_API, body: task.body, bodyType: 'json' });
                 return result || { status: 'restored', ids: task.body.ids };
             },
         });
@@ -66,11 +66,11 @@ async function cmdTrashRestore(args) {
     requireConfirmation(args);
 
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     out(result || { status: 'restored', ids: body.ids });
 }
 
@@ -78,7 +78,7 @@ async function cmdTrashRestore(args) {
 // Note: Uses v1 for PURGE action as per public API documentation.
 
 async function cmdTrashDelete(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -93,10 +93,10 @@ async function cmdTrashDelete(args) {
                 return { label: body.ids.join(','), body: body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, TRASH_V1_API), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, TRASH_V1_API, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'POST', apiPath: TRASH_V1_API, body: task.body, bodyType: 'json' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: TRASH_V1_API, body: task.body, bodyType: 'json' });
                 return result || { status: 'purged', ids: task.body.ids };
             },
         });
@@ -118,11 +118,11 @@ async function cmdTrashDelete(args) {
     requireConfirmation(args);
 
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     out(result || { status: 'purged', ids: body.ids });
 }
 

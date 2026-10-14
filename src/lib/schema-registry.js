@@ -27,6 +27,32 @@ const TRANSFER_PROGRESS_FLAGS = {
     },
 };
 
+// Flags shared by the async AI operations. They only apply while the command waits;
+// anywhere else they are rejected rather than silently ignored.
+const ASYNC_WAIT_FLAGS = {
+    timeout:         { default: 300, description: 'Soft polling budget in seconds (default 300), not a hard command deadline. For ai ask, starts after submission. Bounds new polls, not an in-flight status request and its retries. Expiry stops CLI waiting without cancelling the execution; server state is unknown. Include executionId in --fields to check again.' },
+    'poll-interval': { default: 6,   description: 'Seconds between status checks (default 6 — the 10 calls/min AI budget).' },
+    'exit-status':   { description: 'Exit 0 completed, 1 failed, 2 timed out, 3 paused for user input. Without it: 0 for any stopped execution and 1 on timeout, as in 2.1.x.' },
+};
+
+// Exit codes in all Assistant modes; outcome classification is opt-in while waiting.
+const ASYNC_EXIT_CODES = {
+    0: 'With --exit-status while waiting: COMPLETED. Otherwise: a successful submission/query, or any stopped execution (including FAILED and AWAITING_USER_CONFIRMATION).',
+    1: 'CLI or API error in any mode; local timeout without --exit-status; FAILED with --exit-status while waiting.',
+    2: 'Only with --exit-status while waiting: local timeout. The CLI stopped waiting without cancelling the execution; server state is unknown. Check again with `egnyte ai status <executionId> --wait`.',
+    3: 'Only with --exit-status while waiting: AWAITING_USER_CONFIRMATION. The CLI cannot answer it — resolve in the Egnyte Web UI, then check the status again.',
+};
+
+// agents keep their pre-existing 2 s poll interval; the AI Assistant 10 calls/min note does not apply.
+const AGENT_WAIT_FLAGS = Object.assign({}, ASYNC_WAIT_FLAGS, {
+    timeout:         { default: 300, description: ASYNC_WAIT_FLAGS.timeout.description.replace('executionId', 'requestId').replace('ai ask', 'agents ask') },
+    'poll-interval': { default: 2,   description: 'Seconds between status checks (default 2).' },
+});
+
+const AGENT_EXIT_CODES = Object.assign({}, ASYNC_EXIT_CODES, {
+    2: 'Only with --exit-status while waiting: local timeout. The CLI stopped waiting without cancelling the request; server state is unknown. Check again with `egnyte agents status <agentId> <requestId> --wait`.',
+});
+
 /**
  * SCHEMA registry — runtime introspection for AI agents.
  *
@@ -556,16 +582,23 @@ const SCHEMA = {
         flags: {
             'no-wait': { description: 'Return the submit response (executionId, conversationId) immediately; skip polling. Check status with ai.status.' },
         },
+        exit_codes: ASYNC_EXIT_CODES,
         // No response_fields: waited output is ai.status's shape, --no-wait output is the submit response (executionId/conversationId/executionStatus/truncated/actions).
         example: 'egnyte ai ask "What are the key metrics in Q3?" --yes --fields status,responseText,citations',
     },
     'ai.status': {
-        summary:      'Get execution status of a prior ai ask (Assistant API)',
+        summary:      'Get execution status of a prior ai ask (Assistant API). One-shot by default; --wait resumes polling until the execution stops.',
         method:       'GET',
         endpoint:     '/pubapi/v1/ai/assistant/{executionId}/status',
         mutating:     false,
+        flags: {
+            wait: { description: 'Poll until the execution stops instead of returning the current status once. Uses a fresh time budget.' },
+        },
+        exit_codes: ASYNC_EXIT_CODES,
         response_fields: {
-            status:         { type: 'string', description: 'IN_PROGRESS | COMPLETED | FAILED | AWAITING_USER_CONFIRMATION' },
+            executionId:    { type: 'string', description: 'Added by the CLI so the payload is always resumable' },
+            conversationId: { type: 'string', description: 'Optional; present when known from submission, a status response or the original ai ask --json. Used for follow-up questions, not to resume a paused execution. Subject to --fields.' },
+            status:         { type: 'string', description: 'Ends a wait: COMPLETED | FAILED | AWAITING_USER_CONFIRMATION. Any other state, including IN_PROGRESS, keeps the wait polling. TIMEOUT is added by the CLI when --timeout runs out: it stops waiting without cancelling the execution; server state is unknown.' },
             responseText:   { type: 'string', description: 'Assistant answer (present when COMPLETED)' },
             thoughts:       { type: 'array',  description: 'Assistant reasoning steps, in plain language' },
             citations:      { type: 'array',  description: 'Source references' },
@@ -683,15 +716,20 @@ const SCHEMA = {
         flags: {
             'no-wait': { description: 'Return requestId immediately; skip polling. Check status with agents.status.' },
         },
+        exit_codes: AGENT_EXIT_CODES,
         example: 'egnyte agents ask <agentId> "Summarize Q3 results" --fields responseText,citations',
     },
     'agents.status': {
-        summary:      'Get execution status of a prior agent ask',
+        summary:      'Get execution status of a prior agent ask. One-shot by default; --wait resumes polling until the request stops.',
         method:       'GET',
         endpoint:     '/pubapi/v1/ai/agents/{agentId}/ask/{requestId}/status',
         mutating:     false,
+        flags: {
+            wait: { description: 'Poll until the request stops instead of returning the current status once. Uses a fresh time budget.' },
+        },
+        exit_codes: AGENT_EXIT_CODES,
         response_fields: {
-            status:       { type: 'string', description: 'PENDING | RUNNING | COMPLETED | FAILED' },
+            status:       { type: 'string', description: 'Ends a wait: COMPLETED | FAILED | AWAITING_USER_CONFIRMATION. Other states keep the wait polling. TIMEOUT is added by the CLI when --timeout runs out; server state is unknown.' },
             responseText: { type: 'string', description: 'Agent answer (present when COMPLETED)' },
             citations:    { type: 'array',  description: 'Source references' },
             lastUpdated:  { type: 'string', description: 'ISO 8601 timestamp' },
@@ -852,4 +890,14 @@ const SCHEMA = {
     SCHEMA[op].flags = Object.assign({}, TRANSFER_PROGRESS_FLAGS, SCHEMA[op].flags || {});
 });
 
-module.exports = { SCHEMA };
+['ai.ask', 'ai.status'].forEach(function(op) {
+    if (!SCHEMA[op]) return;
+    SCHEMA[op].flags = Object.assign({}, ASYNC_WAIT_FLAGS, SCHEMA[op].flags || {});
+});
+
+['agents.ask', 'agents.status'].forEach(function(op) {
+    if (!SCHEMA[op]) return;
+    SCHEMA[op].flags = Object.assign({}, AGENT_WAIT_FLAGS, SCHEMA[op].flags || {});
+});
+
+module.exports = { SCHEMA, ASYNC_WAIT_FLAGS, AGENT_WAIT_FLAGS };

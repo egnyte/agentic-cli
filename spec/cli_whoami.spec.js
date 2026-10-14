@@ -274,6 +274,55 @@ describe("egnyte whoami", function() {
         });
     });
 
+    describe("with desktop_app stored profile", function() {
+        var tmpHome;
+        var mockKeychainPath = path.join(__dirname, "fixtures", "mock-egnyte-keychain.js");
+        var fixture = require("./fixtures/desktop-app-profile.sample.json");
+
+        beforeEach(function() {
+            tmpHome = makeTempProfile(fixture.profiles[fixture.default_profile]);
+        });
+
+        afterEach(function() {
+            fs.rmSync(tmpHome, { recursive: true, force: true });
+        });
+
+        function opts() {
+            return { env: { EGNYTE_TOKEN: "", EGNYTE_DOMAIN: "", HOME: tmpHome, EGNYTE_KEYCHAIN_MODULE: mockKeychainPath } };
+        }
+
+        it("exits 0", function() {
+            var result = spawnCLI(["whoami"], opts());
+            expect(result.status).toBe(0);
+        });
+
+        it("reports auth_source as desktop_app", function() {
+            var result = spawnCLI(["whoami"], opts());
+            expect(result.json().auth_source).toBe("desktop_app");
+        });
+
+        it("reports domain from the profile", function() {
+            var result = spawnCLI(["whoami"], opts());
+            expect(result.json().domain).toBe("https://test.egnyte.com");
+        });
+
+        it("masks the token resolved via the library", function() {
+            var result = spawnCLI(["whoami"], opts());
+            var hint = result.json().token_hint;
+            expect(hint).toContain("mock-key");
+            expect(hint).toContain("***");
+            expect(hint).not.toContain("mock-keychain-token-9999");
+        });
+
+        it("fails clearly when the library isn't installed", function() {
+            var badOpts = opts();
+            badOpts.env.EGNYTE_KEYCHAIN_MODULE = "/nonexistent/module-" + Date.now() + ".js";
+            var result = spawnCLI(["whoami"], badOpts);
+            expect(result.status).toBe(1);
+            expect(result.errorJson().error).toContain("@egnyte/keyring is not installed");
+        });
+    });
+
     describe("--fields filtering", function() {
         it("returns only requested fields", function() {
             var result = spawnCLI(["whoami", "--fields", "auth_source,domain"], {

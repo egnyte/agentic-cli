@@ -14,7 +14,7 @@ const FS_API = '/pubapi/v1/fs';
 // ── lock lock ─────────────────────────────────────────────────────────────────
 
 async function cmdLockLock(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -30,10 +30,10 @@ async function cmdLockLock(args) {
                 return { label: p, path: p, payload: payload };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path), body: task.payload, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path, null, auth_source), body: task.payload, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'POST', apiPath: FS_API + task.path, body: task.payload, bodyType: 'json' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: FS_API + task.path, body: task.payload, bodyType: 'json' });
                 return applyFields(result, args.fields);
             },
         });
@@ -52,18 +52,18 @@ async function cmdLockLock(args) {
 
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body: payload, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body: payload, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body: payload, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body: payload, bodyType: 'json' });
     out(applyFields(result, args.fields));
 }
 
 // ── lock unlock ───────────────────────────────────────────────────────────────
 
 async function cmdLockUnlock(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -79,10 +79,10 @@ async function cmdLockUnlock(args) {
                 return { label: p, path: p, payload: payload };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path), body: task.payload, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, FS_API + task.path, null, auth_source), body: task.payload, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'POST', apiPath: FS_API + task.path, body: task.payload, bodyType: 'json' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: FS_API + task.path, body: task.payload, bodyType: 'json' });
                 return applyFields(result || { status: 'unlocked', path: task.path }, args.fields);
             },
         });
@@ -101,24 +101,24 @@ async function cmdLockUnlock(args) {
 
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body: payload, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body: payload, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body: payload, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body: payload, bodyType: 'json' });
     out(applyFields(result || { status: 'unlocked', path: p }, args.fields));
 }
 
 // ── lock get ──────────────────────────────────────────────────────────────────
 
 async function cmdLockGet(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const p = args._[2];
 
     if (!p) throw new CLIError('Usage: egnyte lock get <path> [--fields locked,lock_owner,lock_timeout]');
     validatePath(p);
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: FS_API + p });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: FS_API + p });
     out(applyFields(result, args.fields));
 }
 

@@ -13,27 +13,27 @@ const GROUPS_API = '/pubapi/v2/groups';
 // ── groups get ────────────────────────────────────────────────────────────────
 
 async function cmdGroupsGet(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const id = args._[2];
     if (!id) throw new CLIError('Usage: egnyte groups get <group-id> [--fields displayName,members]');
 
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: GROUPS_API + '/' + id });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: GROUPS_API + '/' + id });
     out(applyFields(result, args.fields));
 }
 
 // ── groups list ───────────────────────────────────────────────────────────────
 
 async function cmdGroupsList(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const query  = parseJsonArg(args.json);
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: GROUPS_API, query });
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: GROUPS_API, query });
     out(applyFields(result, args.fields));
 }
 
 // ── groups create ─────────────────────────────────────────────────────────────
 
 async function cmdGroupsCreate(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -47,10 +47,10 @@ async function cmdGroupsCreate(args) {
                 return { label: String(body.displayName), body: body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'POST', url: buildUrl(domain, GROUPS_API), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'POST', url: buildUrl(domain, GROUPS_API, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'POST', apiPath: GROUPS_API, body: task.body, bodyType: 'json' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath: GROUPS_API, body: task.body, bodyType: 'json' });
                 return applyFields(result, args.fields);
             },
         });
@@ -64,18 +64,18 @@ async function cmdGroupsCreate(args) {
     const apiPath = GROUPS_API;
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'POST', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'POST', apiPath, body, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, auth_source, method: 'POST', apiPath, body, bodyType: 'json' });
     out(applyFields(result, args.fields));
 }
 
 // ── groups update ─────────────────────────────────────────────────────────────
 
 async function cmdGroupsUpdate(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -91,10 +91,10 @@ async function cmdGroupsUpdate(args) {
                 return { label: String(id), id: id, body: body };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'PATCH', url: buildUrl(domain, GROUPS_API + '/' + task.id), body: task.body, bodyType: 'json' });
+                return formatDryRun({ method: 'PATCH', url: buildUrl(domain, GROUPS_API + '/' + task.id, null, auth_source), body: task.body, bodyType: 'json' });
             },
             executeTask: async function(task) {
-                const result = await apiRequest({ domain, token, method: 'PATCH', apiPath: GROUPS_API + '/' + task.id, body: task.body, bodyType: 'json' });
+                const result = await apiRequest({ domain, token, auth_source, method: 'PATCH', apiPath: GROUPS_API + '/' + task.id, body: task.body, bodyType: 'json' });
                 return applyFields(result || { status: 'updated', id: task.id }, args.fields);
             },
         });
@@ -110,18 +110,18 @@ async function cmdGroupsUpdate(args) {
     const apiPath = GROUPS_API + '/' + id;
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'PATCH', url: buildUrl(domain, apiPath), body, bodyType: 'json' });
+        printDryRun({ method: 'PATCH', url: buildUrl(domain, apiPath, null, auth_source), body, bodyType: 'json' });
         return;
     }
 
-    const result = await apiRequest({ domain, token, method: 'PATCH', apiPath, body, bodyType: 'json' });
+    const result = await apiRequest({ domain, token, auth_source, method: 'PATCH', apiPath, body, bodyType: 'json' });
     out(applyFields(result || { status: 'updated', id }, args.fields));
 }
 
 // ── groups delete ─────────────────────────────────────────────────────────────
 
 async function cmdGroupsDelete(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     if (isBulkMode(args)) {
         requireConfirmation(args);
         const rows = loadBulkRows(args);
@@ -135,10 +135,10 @@ async function cmdGroupsDelete(args) {
                 return { label: String(id), id: id };
             },
             formatDryRun: function(task) {
-                return formatDryRun({ method: 'DELETE', url: buildUrl(domain, GROUPS_API + '/' + task.id) });
+                return formatDryRun({ method: 'DELETE', url: buildUrl(domain, GROUPS_API + '/' + task.id, null, auth_source) });
             },
             executeTask: async function(task) {
-                await apiRequest({ domain, token, method: 'DELETE', apiPath: GROUPS_API + '/' + task.id });
+                await apiRequest({ domain, token, auth_source, method: 'DELETE', apiPath: GROUPS_API + '/' + task.id });
                 return { status: 'deleted', id: task.id };
             },
         });
@@ -152,11 +152,11 @@ async function cmdGroupsDelete(args) {
     const apiPath = GROUPS_API + '/' + id;
     requireConfirmation(args);
     if (args['dry-run']) {
-        printDryRun({ method: 'DELETE', url: buildUrl(domain, apiPath) });
+        printDryRun({ method: 'DELETE', url: buildUrl(domain, apiPath, null, auth_source) });
         return;
     }
 
-    await apiRequest({ domain, token, method: 'DELETE', apiPath });
+    await apiRequest({ domain, token, auth_source, method: 'DELETE', apiPath });
     out({ status: 'deleted', id });
 }
 

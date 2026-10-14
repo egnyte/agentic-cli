@@ -4,6 +4,7 @@ const { out, CLIError }                             = require('../lib/output');
 const { loadConfig, saveConfig, getProfile,
         setProfile, removeProfile }                 = require('../lib/config');
 const { doOAuthLogin, resolveAuth }                 = require('../lib/auth');
+const { resolveDesktopAppToken }                    = require('../lib/desktop-keychain');
 const { apiRequest }                                = require('../lib/http');
 const { applyFields }                               = require('../lib/fields');
 const { normalizeDomain }                           = require('../lib/domain');
@@ -32,6 +33,12 @@ async function cmdLogin(args) {
     const clientSecret = customSecret || DEFAULT_CLIENT_SECRET;
 
     const useLocalhostCallback = !customId || customId === DEFAULT_CLIENT_ID;
+    // setProfile merges data: overwriting a DA profile would retain its source
+    // and keep resolving the keyring token instead of the new login token.
+    const profile = getProfile(profileName);
+    if (profile && profile.source === 'desktop_app') {
+        throw new CLIError("Profile '" + profileName + "' is set by DesktopApp. Use --profile with a different name to log in.");
+    }
     const tokenData = await doOAuthLogin({ domain, clientId, clientSecret, redirectUri, scope, useLocalhostCallback });
     setProfile(profileName, tokenData);
 
@@ -78,6 +85,17 @@ async function cmdWhoami(args) {
     // Stored profile — read directly, never refresh, so expired profiles are inspectable
     const profileName = args.profile || loadConfig().default_profile || 'default';
     const profile     = getProfile(profileName);
+
+    if (profile && profile.source === 'desktop_app') {
+        const token = await resolveDesktopAppToken(profile);
+        return out(applyFields({
+            auth_source: 'desktop_app',
+            profile:     profileName,
+            domain:      normalizeDomain(profile.domain),
+            token_hint:  token.slice(0, 8) + '***',
+        }, args.fields));
+    }
+
     if (!profile || !profile.access_token) {
         throw new CLIError('Not authenticated. Run: egnyte login');
     }
@@ -149,8 +167,8 @@ async function cmdProfiles(args) {
 // server and returns the user record rather than stored credential metadata.
 
 async function cmdUserInfo(args) {
-    const { token, domain } = await resolveAuth(args);
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: '/pubapi/v1/userinfo' });
+    const { token, domain, auth_source } = await resolveAuth(args);
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: '/pubapi/v1/userinfo' });
     out(applyFields(result, args.fields));
 }
 

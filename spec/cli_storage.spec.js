@@ -6,6 +6,7 @@
 var fs   = require("fs");
 var path = require("path");
 var os   = require("os");
+var formatCliFailure = require("./helpers/cli-failure").formatCliFailure;
 
 var integrationDescribe = (typeof egnyteDomain !== "undefined" && egnyteDomain && typeof APIToken !== "undefined" && APIToken) ? describe : xdescribe;
 
@@ -427,10 +428,16 @@ integrationDescribe("egnyte fs — Storage API integration", function() {
         var localSrc      = path.join(os.tmpdir(), "egnyte-cli-resume-src-" + runId + ".txt");
         var DL_OPTS       = { token: APIToken, domain: egnyteDomain };
 
+        function requireSuccess(result, phase) {
+            if (result.status === 0) return;
+            throw new Error(phase + " failed (" + formatCliFailure(result) + ")");
+        }
+
         beforeAll(function() {
             jasmine.DEFAULT_TIMEOUT_INTERVAL = 30000;
             fs.writeFileSync(localSrc, localContent);
-            spawnCLI(["fs", "upload", resumeRemote, "--file", localSrc, "--yes"], DL_OPTS);
+            var result = spawnCLI(["fs", "upload", resumeRemote, "--file", localSrc, "--yes"], DL_OPTS);
+            requireSuccess(result, "Resume fixture upload");
         });
 
         afterAll(function() {
@@ -445,19 +452,19 @@ integrationDescribe("egnyte fs — Storage API integration", function() {
                 ["fs", "download", resumeRemote, "--out", resumeLocal, "--resume"],
                 DL_OPTS
             );
-            expect(result.status).toBe(0);
+            requireSuccess(result, "Download to missing local file");
             expect(fs.existsSync(resumeLocal)).toBe(true);
             expect(fs.readFileSync(resumeLocal, "utf8")).toBe(localContent);
         });
 
         it("--resume on an already-complete file exits 0 without corrupting it", function() {
-            // File is already fully downloaded from the previous test — resume should
-            // detect 416 (range not satisfiable) and treat it as success.
+            // Seed independently so this test also works in isolation or random order.
+            fs.writeFileSync(resumeLocal, localContent);
             var result = spawnCLI(
                 ["fs", "download", resumeRemote, "--out", resumeLocal, "--resume"],
                 DL_OPTS
             );
-            expect(result.status).toBe(0);
+            requireSuccess(result, "Resume already-complete local file");
             expect(fs.readFileSync(resumeLocal, "utf8")).toBe(localContent);
         });
 
@@ -469,7 +476,7 @@ integrationDescribe("egnyte fs — Storage API integration", function() {
                 ["fs", "download", resumeRemote, "--out", resumeLocal, "--resume"],
                 DL_OPTS
             );
-            expect(result.status).toBe(0);
+            requireSuccess(result, "Resume truncated local file");
             expect(fs.readFileSync(resumeLocal, "utf8")).toBe(localContent);
         });
     });

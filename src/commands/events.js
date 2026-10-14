@@ -11,15 +11,15 @@ const EVENTS_API = '/pubapi/v1/events';
 // ── events get-cursor ─────────────────────────────────────────────────────────
 
 async function cmdEventsGetCursor(args) {
-    const { token, domain } = await resolveAuth(args);
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: EVENTS_API + '/cursor' });
+    const { token, domain, auth_source } = await resolveAuth(args);
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: EVENTS_API + '/cursor' });
     out(applyFields(result, args.fields));
 }
 
 // ── events list ───────────────────────────────────────────────────────────────
 
 async function cmdEventsList(args) {
-    const { token, domain } = await resolveAuth(args);
+    const { token, domain, auth_source } = await resolveAuth(args);
     const query = parseJsonArg(args.json);
 
     if (query.id === undefined) {
@@ -29,7 +29,7 @@ async function cmdEventsList(args) {
     // The events API returns an empty body when no events match — normalize to the
     // same shape as a non-empty response so callers can always read .events. With
     // --verbose the empty body arrives wrapped as { _data: null, _ratelimit }.
-    const result = await apiRequest({ domain, token, method: 'GET', apiPath: EVENTS_API, query }) || {};
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: EVENTS_API, query }) || {};
     if (result.events === undefined) {
         delete result._data;
         result.events = [];

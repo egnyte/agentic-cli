@@ -76,10 +76,31 @@ function sleep(ms) {
 let _verbose = false;
 function setVerbose(v) { _verbose = v; }
 
-/** Build a full HTTPS URL from domain, API path, and optional query params object. */
-function buildUrl(domain, apiPath, query) {
+/**
+ * Resolve the Authorization header and API path for a token.
+ * Desktop App tokens are OAuth tokens: "OAUTH oauth_token=..." on /api/...
+ * Other auth sources keep Bearer authentication and the supplied path.
+ */
+function buildAuth(token, authSource, apiPath) {
+    if (authSource === 'desktop_app') {
+        return {
+            authorization: 'OAUTH oauth_token=' + token + ',oauth_version=2.0',
+            apiPath: resolveApiPath(apiPath, authSource)
+        };
+    }
+    return { authorization: 'Bearer ' + token, apiPath };
+}
+
+// Shared by actual requests and dry-run previews. Never rewrite an embedded
+// /pubapi segment or a different prefix such as /pubapi-other.
+function resolveApiPath(apiPath, authSource) {
+    return authSource === 'desktop_app' ? apiPath.replace(/^\/pubapi(?=\/|\?|$)/, '/api') : apiPath;
+}
+
+/** Build an HTTPS URL; an optional auth source also routes dry-run previews. */
+function buildUrl(domain, apiPath, query, authSource) {
     query = query || {};
-    const base = buildEgnyteBaseUrl(domain) + apiPath;
+    const base = buildEgnyteBaseUrl(domain) + resolveApiPath(apiPath, authSource);
     const pairs = [];
     Object.entries(query).forEach(function(pair) {
         const k = pair[0];
@@ -161,10 +182,12 @@ async function httpPost(url, body, contentType) {
  * Throws CLIError on HTTP 4xx/5xx.
  */
 async function apiRequest(opts) {
-    const { domain, token, method, apiPath, query, body, bodyType, raw } = opts;
+    const { domain, token, auth_source, method, query, body, bodyType, raw } = opts;
+    const auth = buildAuth(token, auth_source, opts.apiPath);
+    const apiPath = auth.apiPath;
     const urlStr = buildUrl(domain, apiPath, query);
     const parsed = new URL(urlStr);
-    const headers = { Authorization: 'Bearer ' + token, 'User-Agent': USER_AGENT };
+    const headers = { Authorization: auth.authorization, 'User-Agent': USER_AGENT };
     // AI Safeguards: route content-serving PubAPI calls (AI, search, file content)
     // through the safeguards facade.
     if (isAiSafeguardedPath(apiPath)) {
@@ -281,8 +304,10 @@ function _withRateLimit(result, headers) {
  * skip bytes already on disk and appends to the file. A 416 response (range
  * not satisfiable) means the file is already complete — treated as success.
  */
-function apiDownload(opts, outPath, resume) {
-    const { domain, token, apiPath, onProgress } = opts;
+function _downloadOnce(opts, outPath, resume) {
+    const { domain, token, auth_source, onProgress } = opts;
+    const auth = buildAuth(token, auth_source, opts.apiPath);
+    const apiPath = auth.apiPath;
     const urlStr = buildUrl(domain, apiPath);
     const parsed = new URL(urlStr);
 
@@ -292,7 +317,7 @@ function apiDownload(opts, outPath, resume) {
         try { startByte = fs.statSync(outPath).size; } catch (_) {}
     }
 
-    const reqHeaders = { Authorization: 'Bearer ' + token, 'User-Agent': USER_AGENT };
+    const reqHeaders = { Authorization: auth.authorization, 'User-Agent': USER_AGENT };
     // AI Safeguards: downloads serve file content — route through the safeguards facade.
     if (isAiSafeguardedPath(apiPath)) {
         reqHeaders[ENABLED_HEADER] = 'true';
@@ -317,7 +342,10 @@ function apiDownload(opts, outPath, resume) {
                 const chunks = [];
                 res.on('data', function(c) { chunks.push(c); });
                 res.on('end', function() {
-                    reject(_buildApiError(res.statusCode, Buffer.concat(chunks)));
+                    const err = _buildApiError(res.statusCode, Buffer.concat(chunks));
+                    const retryAfter = parseInt(res.headers['retry-after']);
+                    if (retryAfter > 0) err.retryAfter = retryAfter;
+                    reject(err);
                 });
                 return;
             }
@@ -366,4 +394,25 @@ function apiDownload(opts, outPath, resume) {
     });
 }
 
-module.exports = { buildUrl, httpRequest, httpPost, apiRequest, apiDownload, setVerbose, USER_AGENT };
+/**
+ * Streaming download with the same rate-limit handling as apiRequest: retries a
+ * 429 (Apigee spike arrest) or a transient 5xx up to 3 times, honouring
+ * Retry-After and falling back to exponential backoff. Only failures raised
+ * before any byte is written are retried, so a resumed file is never corrupted.
+ */
+async function apiDownload(opts, outPath, resume) {
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            return await _downloadOnce(opts, outPath, resume);
+        } catch (err) {
+            const status = err && err.statusCode;
+            const retryable = status === 429 || status >= 500;
+            if (!retryable || attempt === MAX_RETRIES) throw err;
+            const delaySec = err.retryAfter > 0 ? err.retryAfter : Math.pow(2, attempt);
+            await sleep(delaySec * 1000);
+        }
+    }
+}
+
+module.exports = { buildUrl, httpRequest, httpPost, apiRequest, apiDownload, setVerbose, buildAuth, USER_AGENT };

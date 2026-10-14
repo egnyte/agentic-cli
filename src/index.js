@@ -247,7 +247,7 @@ Agents:
 
 AI:
   ai ask "<question>" --yes|--dry-run [--json '{}'] Ask the AI Assistant (async; polls until done; --no-wait to return immediately)
-  ai status <executionId>                          Check execution status of a prior ai ask
+  ai status <executionId> [--wait]                 Check execution status of a prior ai ask (--wait polls until it stops)
   ai ask-document <path> "<question>" [--json '{}'] Ask a question about a specific file
   ai summarize <path>                              Summarize the content of a file
   ai list-kbs [--json '{}']                        List available Knowledge Bases
@@ -288,6 +288,12 @@ Flags:
   --verbose             Include rate-limit headers in output (_ratelimit field)
   --profile <name>      Use a named profile instead of default
   --token / --domain    Override stored credentials for one call
+
+Waiting (ai ask, ai status --wait, agents ask, agents status --wait):
+  --timeout <s>         Soft polling budget in seconds (default 300), not a hard command deadline
+                        Starts after ask submission; in-flight requests and retries may finish later
+  --poll-interval <s>   Seconds between status checks (default 6; agents 2)
+  --exit-status         Exit 0 completed / 1 error or failed / 2 timed out / 3 paused
 
 Examples:
   egnyte fs get /Shared --json '{"list_content":true}' --fields name,path,size

@@ -1,0 +1,14 @@
+{
+  "default_profile": "da-admin@test.egnyte.com",
+  "profiles": {
+    "da-admin@test.egnyte.com": {
+      "domain": "https://test.egnyte.com",
+      "source": "desktop_app",
+      "desktopCtx": {
+        "accountId": "d1465143-3f1e-4157-b5e3-ee78376e8353",
+        "username": "admin",
+        "domain": "test.egnyte.com"
+      }
+    }
+  }
+}

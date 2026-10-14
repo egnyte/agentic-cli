@@ -254,11 +254,19 @@ egnyte lock get /Shared/report.pdf
 # ── AI ────────────────────────────────────────────────────────────────────────
 
 # Ask the AI Assistant (optionally scope to files or folders) — requires --yes or --dry-run;
-# async: submits, then polls every 6 s (up to 5 min) unless --no-wait is used
+# async: polls every 6 s within a 300 s soft polling budget after submission (--poll-interval / --timeout).
+# An in-flight HTTP request/retries may finish later. --no-wait returns after submission.
 egnyte ai ask "What are the key metrics in Q3?" --yes --fields status,responseText,citations
 egnyte ai ask "Revenue trends?" --yes --json '{"selectedItems":{"folders":[{"id":"<folder-id>"}]},"includeCitations":true}' --fields status,responseText,citations
 egnyte ai ask "Long-running analysis" --yes --no-wait --fields executionId
 egnyte ai status <executionId> --fields status,responseText,citations
+
+# Resume checking (not the execution); keep the same profile when retrying.
+# --exit-status while waiting: 0 completed, 1 error/FAILED, 2 timeout, 3 paused.
+# --fields applies to IDs and timeout results too; include them if needed.
+egnyte ai status <executionId> --wait --exit-status --timeout 600 --fields executionId,conversationId,status,responseText,citations
+# On exit 3: inspect pending actions, show the question and stop. Never decide for the user.
+egnyte ai status <executionId> --fields status,pendingActions,toolCalls
 
 # Ask a question about a specific file (path auto-resolved to entry-id)
 egnyte ai ask-document /Shared/Contracts/acme.pdf "What are the payment terms?" --fields response

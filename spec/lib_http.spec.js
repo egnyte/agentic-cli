@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
 
-const { apiRequest, apiDownload } = require('../src/lib/http');
+const { apiRequest, apiDownload, buildAuth, buildUrl } = require('../src/lib/http');
 const { CLIError } = require('../src/lib/output');
 
 describe('http helpers', function() {
@@ -134,6 +134,74 @@ describe('http helpers', function() {
 
         expect(result).toEqual({ ok: true });
         expect(callMethods).toEqual(['DELETE', 'DELETE']);
+    });
+
+    describe('buildAuth', function() {
+        it('uses Bearer and keeps /pubapi for non-desktop tokens', function() {
+            expect(buildAuth('t', 'stored_profile', '/pubapi/v1/fs/Shared')).toEqual({
+                authorization: 'Bearer t', apiPath: '/pubapi/v1/fs/Shared'
+            });
+            expect(buildAuth('t', undefined, '/pubapi/v1/userinfo').authorization).toBe('Bearer t');
+        });
+
+        it('uses OAUTH header and /api for desktop_app tokens', function() {
+            expect(buildAuth('t', 'desktop_app', '/pubapi/v1/fs/Shared')).toEqual({
+                authorization: 'OAUTH oauth_token=t,oauth_version=2.0', apiPath: '/api/v1/fs/Shared'
+            });
+        });
+
+        it('only rewrites the leading /pubapi segment', function() {
+            expect(buildAuth('t', 'desktop_app', '/pubapi/v1/fs/pubapi/x').apiPath).toBe('/api/v1/fs/pubapi/x');
+        });
+
+        [
+            ['/pubapi', '/api'],
+            ['/pubapi?x=1', '/api?x=1'],
+            ['/pubapi/v1/fs/Shared/pubapi/file', '/api/v1/fs/Shared/pubapi/file'],
+            ['/api/v1/userinfo', '/api/v1/userinfo'],
+            ['/pubapi-other/v1', '/pubapi-other/v1'],
+            ['/custom/pubapi/v1', '/custom/pubapi/v1'],
+        ].forEach(function(paths) {
+            it('routes only the public API prefix: ' + paths[0], function() {
+                expect(buildAuth('t', 'desktop_app', paths[0]).apiPath).toBe(paths[1]);
+                expect(buildUrl('https://test.egnyte.com', paths[0], null, 'desktop_app'))
+                    .toBe('https://test.egnyte.com' + paths[1]);
+                expect(buildAuth('t', 'unknown-source', paths[0]))
+                    .toEqual({ authorization: 'Bearer t', apiPath: paths[0] });
+            });
+        });
+
+        it('keeps the existing buildUrl signature and query encoding', function() {
+            const query = { query: 'some text' };
+            expect(buildUrl('https://test.egnyte.com', '/pubapi/v1/search', query))
+                .toBe('https://test.egnyte.com/pubapi/v1/search?query=some%20text');
+            expect(buildUrl('https://test.egnyte.com', '/pubapi/v1/search', query, 'desktop_app'))
+                .toBe('https://test.egnyte.com/api/v1/search?query=some%20text');
+        });
+    });
+
+    it('apiRequest sends OAUTH header to /api for desktop_app tokens', async function() {
+        let paths = [];
+        const inner = https.request;
+        https.request = function(options, cb) { paths.push(options.path); return inner(options, cb); };
+        queuedResponses.push({ status: 200, body: '{}', headers: { 'content-type': 'application/json' } });
+
+        await apiRequest({ domain: 'https://testdomain.egnyte.com', token: 'tok', auth_source: 'desktop_app', method: 'GET', apiPath: '/pubapi/v1/userinfo' });
+
+        expect(callHeaders[0].Authorization).toBe('OAUTH oauth_token=tok,oauth_version=2.0');
+        expect(paths[0]).toBe('/api/v1/userinfo');
+    });
+
+    it('apiRequest keeps Bearer on /pubapi when auth_source is not desktop_app', async function() {
+        let paths = [];
+        const inner = https.request;
+        https.request = function(options, cb) { paths.push(options.path); return inner(options, cb); };
+        queuedResponses.push({ status: 200, body: '{}', headers: { 'content-type': 'application/json' } });
+
+        await apiRequest({ domain: 'https://testdomain.egnyte.com', token: 'tok', auth_source: 'stored_profile', method: 'GET', apiPath: '/pubapi/v1/userinfo' });
+
+        expect(callHeaders[0].Authorization).toBe('Bearer tok');
+        expect(paths[0]).toBe('/pubapi/v1/userinfo');
     });
 
     it('sends X-Egnyte-Ai-Safeguards-Enabled on AI endpoint requests', async function() {
