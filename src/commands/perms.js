@@ -15,14 +15,21 @@ const PERMS_USER_LOOKUP = '/pubapi/v1/perms/user';
 
 // ── perms get-user ────────────────────────────────────────────────────────────
 
-async function cmdPermsGetUser(args) {
+// get-user and get-group read the same folder permissions; --json carries the
+// optional users / groups filters of GET /v1/perms/folder/{path}.
+async function getFolderPerms(args, command, fields) {
     const { token, domain, auth_source } = await resolveAuth(args);
     const p = args._[2];
-    if (!p) throw new CLIError('Usage: egnyte perms get-user <folder-path> [--fields users]');
+    if (!p) throw new CLIError('Usage: egnyte perms ' + command + ' <folder-path> [--json \'{"users":"jsmith|ajones","groups":"Marketing"}\'] [--fields ' + fields + ']');
     validatePath(p);
 
-    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: PERMS_FOLDER_API + p });
+    const query = parseJsonArg(args.json);
+    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: PERMS_FOLDER_API + p, query });
     out(applyFields(result, args.fields));
+}
+
+async function cmdPermsGetUser(args) {
+    return getFolderPerms(args, 'get-user', 'users');
 }
 
 // ── perms set-user ────────────────────────────────────────────────────────────
@@ -133,13 +140,7 @@ async function cmdPermsDeleteUser(args) {
 // ── perms get-group ───────────────────────────────────────────────────────────
 
 async function cmdPermsGetGroup(args) {
-    const { token, domain, auth_source } = await resolveAuth(args);
-    const p = args._[2];
-    if (!p) throw new CLIError('Usage: egnyte perms get-group <folder-path> [--fields groups]');
-    validatePath(p);
-
-    const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: PERMS_FOLDER_API + p });
-    out(applyFields(result, args.fields));
+    return getFolderPerms(args, 'get-group', 'groups');
 }
 
 // ── perms set-group ───────────────────────────────────────────────────────────

@@ -53,6 +53,21 @@ const AGENT_EXIT_CODES = Object.assign({}, ASYNC_EXIT_CODES, {
     2: 'Only with --exit-status while waiting: local timeout. The CLI stopped waiting without cancelling the request; server state is unknown. Check again with `egnyte agents status <agentId> <requestId> --wait`.',
 });
 
+// GET /v1/search parameters shared by search and search advanced.
+const SEARCH_V1_SORT_AND_MATCH = {
+    sort_by:           { type: 'string',  required: false, enum: ['last_modified', 'size', 'name', 'score'], description: 'Field to sort results by' },
+    sort_direction:    { type: 'string',  required: false, enum: ['ascending', 'descending'], description: 'Sort direction; applies only together with sort_by' },
+    query_operator:    { type: 'string',  required: false, enum: ['ANY', 'ALL'], description: 'Match any word or all words of the query (default ANY)' },
+    snippet_requested: { type: 'boolean', required: false, description: 'Include text snippets in the results (default true)' },
+};
+
+// Intentional API version splits (PINT-22523), shown by `egnyte schema` as `notes`.
+const PERMS_READ_NOTE = 'Reads use GET v1 although it is deprecated: GET v2 rejects top-level folders such as /Shared (HTTP 400) and returns a different shape (userPerms/groupPerms maps) with different entries. Writes use POST v2.';
+const TRASH_WRITE_NOTE = 'Restore and purge use POST v1 (no v2 replacement is published); list uses GET v2. Pass items[].id from trash list. An HTTP 207 response can report per-item failures even when the command exits 0.';
+
+// Shown by `egnyte schema` as `deprecated` on ai.list-kbs and ai.ask-kb.
+const KB_DEPRECATED = 'Egnyte is migrating Knowledge Bases to Agents: accounts already migrated get HTTP 410 (KBA_MIGRATED_TO_AGENTS). The command prints a warning on stderr and will be removed in a future release.';
+
 /**
  * SCHEMA registry — runtime introspection for AI agents.
  *
@@ -60,8 +75,16 @@ const AGENT_EXIT_CODES = Object.assign({}, ASYNC_EXIT_CODES, {
  * to discover available operations and their parameters without pre-loaded docs.
  *
  * Each entry encodes: summary, HTTP method, endpoint template, mutating flag,
- * parameter definitions, and a copy-paste example.
+ * parameter definitions, a copy-paste example and, where useful, notes or a
+ * deprecation notice.
  */
+// GET /v1/perms/folder/{path} filters, shared by perms get-user and get-group. The API marks
+// this endpoint deprecated; GET /v2/perms/{path} returns a different shape and has no filters.
+const PERMS_FOLDER_QUERY = {
+    users:  { type: 'string', required: false, description: 'Only these users, pipe-separated (e.g. jsmith|ajones)' },
+    groups: { type: 'string', required: false, description: 'Only these groups, pipe-separated (e.g. All Power Users|Marketing)' },
+};
+
 const SCHEMA = {
 
     // ── File System ─────────────────────────────────────────────────────────────
@@ -214,36 +237,34 @@ const SCHEMA = {
         mutating: false,
         query_params: {
             query:   { type: 'string',  required: true,  description: 'Full-text search query' },
-            count:   { type: 'integer', required: false, description: 'Max results to return (default 25, max 100)' },
+            count:   { type: 'integer', required: false, description: 'Results per page, 1–20' },
             offset:  { type: 'integer', required: false, description: 'Pagination offset' },
             folder:  { type: 'string',  required: false, description: 'Restrict results to this folder path' },
-            type:    { type: 'string',  required: false, description: 'Filter by type: file | folder' },
-            group_by_type: { type: 'boolean', required: false, description: 'Group results by file type' },
+            type:    { type: 'string',  required: false, enum: ['FILE', 'FOLDER'], description: 'Filter by type: FILE | FOLDER' },
+            ...SEARCH_V1_SORT_AND_MATCH,
         },
         example: "egnyte search 'quarterly report' --json '{\"count\": 20, \"folder\": \"/Shared\"}' --fields name,path,size",
     },
     'search.advanced': {
-        summary:  'Advanced search with metadata filters, date ranges, folder scoping, and similarity options',
+        summary:  'Advanced search with date ranges, folder scoping, and field targeting',
         method:   'GET',
         endpoint: '/pubapi/v1/search',
         mutating: false,
         query_params: {
             query:               { type: 'string',  required: true,  description: 'Full-text or semantic search query' },
             folder:              { type: 'string',  required: false, description: 'Restrict results to this folder path' },
-            type:                { type: 'string',  required: false, description: 'Filter by type: file | folder' },
-            custom_metadata:     { type: 'object',  required: false, description: 'Filter by custom metadata key-value pairs' },
+            type:                { type: 'string',  required: false, enum: ['FILE', 'FOLDER'], description: 'Filter by type: FILE | FOLDER' },
             modified_before:     { type: 'string',  required: false, description: 'ISO 8601 date — only files modified before this date' },
             modified_after:      { type: 'string',  required: false, description: 'ISO 8601 date — only files modified after this date' },
             uploaded_before:     { type: 'string',  required: false, description: 'ISO 8601 date — only files uploaded before this date' },
             uploaded_after:      { type: 'string',  required: false, description: 'ISO 8601 date — only files uploaded after this date' },
-            sort_by:             { type: 'string',  required: false, description: 'Field to sort results by' },
-            file_query_fields:   { type: 'array',   required: false, description: 'Restrict full-text search to these file fields' },
-            folder_query_fields: { type: 'array',   required: false, description: 'Restrict full-text search to these folder fields' },
-            namespaces:          { type: 'array',   required: false, description: 'Metadata namespaces to include in results' },
-            count:               { type: 'integer', required: false, description: 'Max results to return (default 25, max 100)' },
+            file_query_fields:   { type: 'string',  required: false, enum: ['ALL', 'FILENAME', 'COMMENTS', 'CONTENT'], description: 'Search files only in this field (default ALL)' },
+            folder_query_fields: { type: 'string',  required: false, enum: ['ALL', 'FOLDERNAME', 'DESCRIPTION'], description: 'Search folders only in this field (default ALL)' },
+            ...SEARCH_V1_SORT_AND_MATCH,
+            count:               { type: 'integer', required: false, description: 'Results per page, 1–20' },
             offset:              { type: 'integer', required: false, description: 'Pagination offset' },
         },
-        example: "egnyte search advanced 'contract' --json '{\"folder\":\"/Shared\",\"modified_after\":\"2024-01-01\",\"custom_metadata\":{\"status\":\"signed\"}}' --fields name,path",
+        example: "egnyte search advanced 'contract' --json '{\"folder\":\"/Shared\",\"modified_after\":\"2024-01-01\"}' --fields name,path",
     },
 
     // ── Links ───────────────────────────────────────────────────────────────────
@@ -320,8 +341,6 @@ const SCHEMA = {
             startIndex: { type: 'integer', required: false, description: 'Pagination start index (1-based)' },
             count:      { type: 'integer', required: false, description: 'Number of users to return' },
             filter:     { type: 'string',  required: false, description: 'SCIM filter e.g. userName eq "jsmith"' },
-            sortBy:     { type: 'string',  required: false, description: 'Field to sort by (e.g. userName)' },
-            sortOrder:  { type: 'string',  required: false, description: 'ascending | descending' },
         },
         example: "egnyte users list --json '{\"count\": 50}' --fields resources.id,resources.userName,resources.email,resources.active",
     },
@@ -426,7 +445,8 @@ const SCHEMA = {
         method:   'GET',
         endpoint: '/pubapi/v1/perms/folder/{folderpath}',
         mutating: false,
-        query_params: {},
+        query_params: PERMS_FOLDER_QUERY,
+        notes:    PERMS_READ_NOTE,
         example:  'egnyte perms get-user /Shared/Finance --fields users',
     },
     'perms.set-user': {
@@ -454,7 +474,8 @@ const SCHEMA = {
         method:   'GET',
         endpoint: '/pubapi/v1/perms/folder/{folderpath}',
         mutating: false,
-        query_params: {},
+        query_params: PERMS_FOLDER_QUERY,
+        notes:    PERMS_READ_NOTE,
         example:  'egnyte perms get-group /Shared/Finance --fields groups',
     },
     'perms.set-group': {
@@ -516,10 +537,11 @@ const SCHEMA = {
         mutating: false,
         query_params: {
             id:       { type: 'integer', required: true,  description: 'Start event ID — get from events get-cursor' },
-            count:    { type: 'integer', required: false, description: 'Number of events to return (default 20, max 100)' },
+            count:    { type: 'integer', required: false, description: 'Number of events to return (default 50, max 100)' },
             folder:   { type: 'string',  required: false, description: 'Filter events to a specific folder path' },
             type:     { type: 'string',  required: false, description: 'Filter by event category, pipe-separated: file_system|note|permission_change. Note: create, move, delete and similar are per-event "action" values, not categories, and are rejected here.' },
-            suppress: { type: 'string',  required: false, description: 'Suppress own events: "app" (default) or "user"' },
+            suppress: { type: 'string',  required: false, enum: ['app', 'user'], description: 'Leave out events made by this app ("app") or by the current user ("user"); omit it to get all events' },
+            reverse:  { type: 'string',  required: false, enum: ['0', '1'], description: 'Set to "1" to return events from (id - count + 1) up to id, instead of ascending from id. Default "0"' },
         },
         example: "egnyte events list --json '{\"id\":12345,\"count\":20,\"folder\":\"/Shared\",\"type\":\"file_system\"}'",
     },
@@ -634,10 +656,11 @@ const SCHEMA = {
         example: 'egnyte ai summarize /Shared/Reports/annual-report.pdf --fields response',
     },
     'ai.ask-kb': {
-        summary:     'Query a specific Knowledge Base',
+        summary:     'Deprecated — use agents.ask. Query a specific Knowledge Base',
         method:      'POST',
         endpoint:    '/pubapi/v1/ai/kb/{kb-id}/ask',
         mutating:    false,
+        deprecated:  KB_DEPRECATED + ' Use agents.ask.',
         body_params: {
             question:         { type: 'string',  required: true,  description: 'Natural-language question' },
             includeCitations: { type: 'boolean', required: false, description: 'Include source citations in response' },
@@ -646,10 +669,11 @@ const SCHEMA = {
         example: 'egnyte ai ask-kb <kb-id> "What is the refund policy?" --json \'{"includeCitations":true}\' --fields response,citations',
     },
     'ai.list-kbs': {
-        summary:  'List available Knowledge Bases',
+        summary:  'Deprecated — use agents.list. List available Knowledge Bases',
         method:   'POST',
         endpoint: '/pubapi/v1/ai/kb/list',
         mutating: false,
+        deprecated: KB_DEPRECATED + ' Use agents.list.',
         body_params: {
             sortBy:                    { type: 'array',   required: false, description: 'Sort fields: createdOn | name' },
             sortDirection:             { type: 'array',   required: false, description: 'ASC | DESC' },
@@ -782,7 +806,8 @@ const SCHEMA = {
             offset: { type: 'integer', required: false, description: 'Pagination offset' },
             count:  { type: 'integer', required: false, description: 'Number of items to return' },
         },
-        example: "egnyte trash list --json '{\"count\": 50}' --fields items.name,items.path,items.size",
+        notes:   'The response has items, count, offset and has_more; page with offset and count until has_more is false.',
+        example: "egnyte trash list --json '{\"count\": 50}' --fields items.id,items.name,items.path,has_more",
     },
     'trash.restore': {
         summary:     'Restore items from the trash',
@@ -792,6 +817,7 @@ const SCHEMA = {
         body_params: {
             ids:       { type: 'array',  required: true, description: 'Array of trash item IDs to restore (max 10)' },
         },
+        notes:       TRASH_WRITE_NOTE,
         example: "egnyte trash restore --json '{\"ids\": [\"item_id_1\"]}' --dry-run",
     },
     'trash.delete': {
@@ -802,6 +828,7 @@ const SCHEMA = {
         body_params: {
             ids:       { type: 'array',  required: true, description: 'Array of trash item IDs to permanently delete (max 10)' },
         },
+        notes:       TRASH_WRITE_NOTE,
         example: "egnyte trash delete --json '{\"ids\": [\"item_id_1\"]}' --dry-run",
     },
 
@@ -813,6 +840,7 @@ const SCHEMA = {
         endpoint:    '/pubapi/v2/project-folders',
         mutating:    false,
         query_params: {},
+        notes:       'The live API returns a flat array of projects; the published spec describes a resources envelope with startIndex/count paging.',
         example:     'egnyte projects list --fields name,id,status',
     },
     'projects.get': {
@@ -830,6 +858,7 @@ const SCHEMA = {
         method:      'POST',
         endpoint:    '/pubapi/v2/project-folders', // Defaulting to v2 (template) in schema, but implementation handles both
         mutating:    true,
+        notes:       'Without templateFolderId the CLI marks an existing folder (rootFolderId) with POST v1, which the published spec documents; with templateFolderId it creates from a template with POST v2 (not in the published spec).',
         body_params: {
             name:           { type: 'string', required: true,  description: 'Project name' },
             status:         { type: 'string', required: true,  description: 'Project status: pending, in-progress, completed, on-hold, or canceled' },

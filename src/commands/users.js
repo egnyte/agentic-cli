@@ -1,7 +1,7 @@
 'use strict';
 
 const { resolveAuth }              = require('../lib/auth');
-const { parseJsonArg }             = require('../lib/args');
+const { parseJsonArg, rejectIgnoredParams } = require('../lib/args');
 const { buildBodyFromRow, isBulkMode,
         loadBulkRows, runBulkOperation } = require('../lib/bulk');
 const { applyFields }              = require('../lib/fields');
@@ -26,6 +26,7 @@ async function cmdUsersGet(args) {
 async function cmdUsersList(args) {
     const { token, domain, auth_source } = await resolveAuth(args);
     const query  = parseJsonArg(args.json);
+    rejectIgnoredParams('users list', 'GET ' + USERS_API, query, ['sortBy', 'sortOrder']);
     const result = await apiRequest({ domain, token, auth_source, method: 'GET', apiPath: USERS_API, query });
     out(applyFields(result, args.fields));
 }

@@ -4,7 +4,7 @@ const fs    = require('fs');
 const os    = require('os');
 const https = require('https');
 const { URL } = require('url');
-const { CLIError } = require('./output');
+const { CLIError, info } = require('./output');
 const { buildEgnyteBaseUrl } = require('./domain');
 const { ENABLED_HEADER, isAiSafeguardedPath } = require('./ai-safeguards');
 const { version: CLI_VERSION } = require('../../package.json');
@@ -30,7 +30,7 @@ function _inputErrorsDetail(p) {
     return parts.length ? parts.join('; ') : undefined;
 }
 
-function _buildApiError(statusCode, bodyBuf) {
+function _buildApiError(statusCode, bodyBuf, headers) {
     const bodyStr = (bodyBuf || Buffer.alloc(0)).toString().trim();
     let message = 'HTTP ' + statusCode;
     let errorCode, requestId, contextInfo;
@@ -63,7 +63,22 @@ function _buildApiError(statusCode, bodyBuf) {
         message += '\n' + AUTH_FAILED_HINT;
     }
 
-    return new CLIError(message, { statusCode, errorCode, requestId, contextInfo });
+    // Retry-After tells the caller when to come back; --verbose adds the quota headers to a 429
+    let retryAfter, retryAt, rateLimit;
+    if (headers) {
+        retryAfter = _retryAfterSeconds(headers);
+        if (retryAfter > 0) {
+            // A huge Retry-After lands outside the Date range; keep the error, drop retryAt
+            const at = new Date(Date.now() + retryAfter * 1000);
+            if (!isNaN(at.getTime())) retryAt = at.toISOString().replace(/\.\d{3}Z$/, 'Z');
+        }
+        if (_verbose && statusCode === 429) {
+            const rl = _rateLimitFromHeaders(headers);
+            if (Object.keys(rl).length) rateLimit = rl;
+        }
+    }
+
+    return new CLIError(message, { statusCode, errorCode, requestId, contextInfo, retryAfter, retryAt, rateLimit });
 }
 
 function sleep(ms) {
@@ -75,6 +90,67 @@ function sleep(ms) {
 // Set once at startup via setVerbose(true) — no changes needed in command files.
 let _verbose = false;
 function setVerbose(v) { _verbose = v; }
+
+// Longest Retry-After (seconds) a 429 is waited out before the CLI gives up. Daily-quota
+// 429s carry a Retry-After of hours; waiting for one would look like a hung command.
+const DEFAULT_MAX_RETRY_WAIT = 60;
+// Upper bound for --max-retry-wait (one day, same as --timeout in ai.js); keeps sleep() under
+// Node's 2^31-1 ms setTimeout limit
+const MAX_RETRY_WAIT_LIMIT = 86400;
+let _maxRetryWait = DEFAULT_MAX_RETRY_WAIT;
+function setMaxRetryWait(sec) { _maxRetryWait = sec; }
+
+// With --json-progress, stderr is newline-delimited JSON, so retry notices are emitted as events.
+let _jsonProgress = false;
+function setJsonProgress(v) { _jsonProgress = v; }
+
+/**
+ * Resolve the retry-wait cap: --max-retry-wait beats EGNYTE_MAX_RETRY_WAIT beats the
+ * default. Whole seconds up to MAX_RETRY_WAIT_LIMIT; 0 means never wait, fail on the first 429 instead.
+ */
+function resolveMaxRetryWait(args, env) {
+    const fromFlag = args['max-retry-wait'] !== undefined;
+    const raw = fromFlag ? args['max-retry-wait'] : env.EGNYTE_MAX_RETRY_WAIT;
+    if (raw === undefined || raw === '') return DEFAULT_MAX_RETRY_WAIT;
+    if (typeof raw !== 'string' || !/^\d+$/.test(raw) || Number(raw) > MAX_RETRY_WAIT_LIMIT) {
+        throw new CLIError('Invalid ' + (fromFlag ? '--max-retry-wait' : 'EGNYTE_MAX_RETRY_WAIT') +
+            ': expected whole seconds from 0 to ' + MAX_RETRY_WAIT_LIMIT + ' (0 = never wait), got ' + String(raw));
+    }
+    return parseInt(raw, 10);
+}
+
+function _retryAfterSeconds(headers) {
+    return parseInt(headers['retry-after']) || 0;
+}
+
+/**
+ * Shared 429 policy for apiRequest and apiDownload. Returns the seconds to wait before
+ * retrying, or throws `err` when the retries are spent or the wait is not worth it.
+ * Every wait is announced on stderr — a retry is never silent (as a JSON event with --json-progress).
+ *
+ * @param {CLIError} err        The 429 error built by _buildApiError (with response headers)
+ * @param {number} attempt      0-based attempt that just failed
+ * @param {number} maxRetries
+ */
+function _planRetry429(err, attempt, maxRetries) {
+    const delaySec = err.retryAfter > 0 ? err.retryAfter : Math.pow(2, attempt);
+    if (delaySec > _maxRetryWait) {
+        // A Retry-After over the default cap is usually an exhausted quota, but nothing in the
+        // response says so — name the wait, not the cause. A shorter one (e.g. with
+        // --max-retry-wait 0) is an ordinary rate limit the caller chose not to wait out
+        if (err.retryAfter > DEFAULT_MAX_RETRY_WAIT) {
+            err.message = 'HTTP 429: rate limited, retry after ' + (err.retryAt || err.retryAfter + 's');
+        }
+        throw err;
+    }
+    if (attempt >= maxRetries) throw err;
+    if (_jsonProgress) {
+        process.stderr.write(JSON.stringify({ type: 'retry', status: 429, wait: delaySec, attempt: attempt + 1, max: maxRetries }) + '\n');
+    } else {
+        info('[retry] HTTP 429, waiting ' + delaySec + 's (' + (attempt + 1) + '/' + maxRetries + ')');
+    }
+    return delaySec;
+}
 
 /**
  * Resolve the Authorization header and API path for a token.
@@ -119,12 +195,13 @@ function buildUrl(domain, apiPath, query, authSource) {
 }
 
 /**
- * Low-level HTTP request. Returns { status, headers, body: Buffer }.
+ * Single HTTP request, no retries. Returns { status, headers, body: Buffer }.
+ * Internal: apiRequest runs its own retry loop around it; other callers use httpRequest.
  * @param {object} options  - Node https.request options
  * @param {Buffer} [body]   - Request body
  * @param {number} [timeoutMs=30000] - Request timeout in ms. Increase for large chunk uploads.
  */
-function httpRequest(options, body, timeoutMs) {
+function _httpRequestOnce(options, body, timeoutMs) {
     return new Promise(function(resolve, reject) {
         const req = https.request(options, function(res) {
             const chunks = [];
@@ -144,6 +221,22 @@ function httpRequest(options, body, timeoutMs) {
         if (body) req.write(body);
         req.end();
     });
+}
+
+/**
+ * HTTP request with the shared 429 policy (same as apiRequest): waits out a Retry-After within
+ * the max retry wait, announcing each wait on stderr, and throws the 429 CLIError when the
+ * retries are spent or the wait is not worth it. Any other status is returned to the caller.
+ * Returns { status, headers, body: Buffer }.
+ */
+async function httpRequest(options, body, timeoutMs) {
+    const MAX_RETRIES = 3;
+    for (let attempt = 0; ; attempt++) {
+        const resp = await _httpRequestOnce(options, body, timeoutMs);
+        if (resp.status !== 429) return resp;
+        const delaySec = _planRetry429(_buildApiError(resp.status, resp.body, resp.headers), attempt, MAX_RETRIES);
+        await sleep(delaySec * 1000);
+    }
 }
 
 /** POST to a URL with a raw string body and a given content-type. Returns parsed JSON. */
@@ -179,6 +272,8 @@ async function httpPost(url, body, contentType) {
  * Authenticated API request to the Egnyte Public API.
  * Automatically retries on 429 (rate-limit) up to 3 times, honouring the
  * Retry-After header when present and falling back to exponential backoff.
+ * Each wait is reported on stderr; a Retry-After over the max retry wait
+ * (default 60 s, see setMaxRetryWait) fails immediately instead of waiting.
  * Throws CLIError on HTTP 4xx/5xx.
  */
 async function apiRequest(opts) {
@@ -209,17 +304,16 @@ async function apiRequest(opts) {
 
     const MAX_RETRIES = 3;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        const resp = await httpRequest({
+        const resp = await _httpRequestOnce({
             hostname: parsed.hostname,
             path:     parsed.pathname + parsed.search,
             method: normalizedMethod,
             headers,
         }, bodyBuf);
 
-        // Rate-limited — wait then retry (up to MAX_RETRIES times)
-        if (resp.status === 429 && attempt < MAX_RETRIES) {
-            const retryAfterSec = parseInt(resp.headers['retry-after']) || 0;
-            const delaySec = retryAfterSec > 0 ? retryAfterSec : Math.pow(2, attempt);
+        // Rate-limited — wait then retry (up to MAX_RETRIES times); throws when not worth waiting
+        if (resp.status === 429) {
+            const delaySec = _planRetry429(_buildApiError(resp.status, resp.body, resp.headers), attempt, MAX_RETRIES);
             await sleep(delaySec * 1000);
             continue;
         }
@@ -234,7 +328,7 @@ async function apiRequest(opts) {
         }
 
         if (resp.status >= 400) {
-            throw _buildApiError(resp.status, resp.body);
+            throw _buildApiError(resp.status, resp.body, resp.headers);
         }
 
         if (resp.body.length === 0) {
@@ -259,15 +353,14 @@ async function apiRequest(opts) {
 }
 
 /**
- * Merge Egnyte rate-limit response headers into the result object when --verbose is on.
+ * Read Egnyte rate-limit response headers into a _ratelimit object ({} when none are present).
  * Egnyte uses non-standard header names (not the common x-ratelimit-* convention):
  *   x-accesstoken-qps-allotted   — calls per second allowed (2 for most tokens)
  *   x-accesstoken-qps-current    — calls used in the current second
  *   x-accesstoken-quota-allotted — total API call quota for the period
  *   x-accesstoken-quota-current  — quota calls used so far
- * If result is null or not a plain object, wraps it as { _data: result, _ratelimit: ... }.
  */
-function _withRateLimit(result, headers) {
+function _rateLimitFromHeaders(headers) {
     const rl = {};
     const qpsAllotted  = parseInt(headers['x-accesstoken-qps-allotted']);
     const qpsCurrent   = parseInt(headers['x-accesstoken-qps-current']);
@@ -281,6 +374,15 @@ function _withRateLimit(result, headers) {
     if (!isNaN(quotaAlloted)) rl.quota_limit   = quotaAlloted;
     if (!isNaN(quotaCurrent)) rl.quota_used    = quotaCurrent;
     if (headers['retry-after']) rl.retry_after = parseInt(headers['retry-after']);
+    return rl;
+}
+
+/**
+ * Merge the rate-limit headers into the result object when --verbose is on.
+ * If result is null or not a plain object, wraps it as { _data: result, _ratelimit: ... }.
+ */
+function _withRateLimit(result, headers) {
+    const rl = _rateLimitFromHeaders(headers);
 
     // Nothing to add — server didn't send rate-limit headers
     if (!Object.keys(rl).length) return result;
@@ -342,10 +444,7 @@ function _downloadOnce(opts, outPath, resume) {
                 const chunks = [];
                 res.on('data', function(c) { chunks.push(c); });
                 res.on('end', function() {
-                    const err = _buildApiError(res.statusCode, Buffer.concat(chunks));
-                    const retryAfter = parseInt(res.headers['retry-after']);
-                    if (retryAfter > 0) err.retryAfter = retryAfter;
-                    reject(err);
+                    reject(_buildApiError(res.statusCode, Buffer.concat(chunks), res.headers));
                 });
                 return;
             }
@@ -397,7 +496,8 @@ function _downloadOnce(opts, outPath, resume) {
 /**
  * Streaming download with the same rate-limit handling as apiRequest: retries a
  * 429 (Apigee spike arrest) or a transient 5xx up to 3 times, honouring
- * Retry-After and falling back to exponential backoff. Only failures raised
+ * Retry-After and falling back to exponential backoff. A 429 follows the same
+ * stderr reporting and max-retry-wait cap as apiRequest. Only failures raised
  * before any byte is written are retried, so a resumed file is never corrupted.
  */
 async function apiDownload(opts, outPath, resume) {
@@ -409,10 +509,15 @@ async function apiDownload(opts, outPath, resume) {
             const status = err && err.statusCode;
             const retryable = status === 429 || status >= 500;
             if (!retryable || attempt === MAX_RETRIES) throw err;
-            const delaySec = err.retryAfter > 0 ? err.retryAfter : Math.pow(2, attempt);
+            const delaySec = status === 429
+                ? _planRetry429(err, attempt, MAX_RETRIES)
+                : (err.retryAfter > 0 ? err.retryAfter : Math.pow(2, attempt));
             await sleep(delaySec * 1000);
         }
     }
 }
 
-module.exports = { buildUrl, httpRequest, httpPost, apiRequest, apiDownload, setVerbose, buildAuth, USER_AGENT };
+module.exports = {
+    buildUrl, httpRequest, httpPost, apiRequest, apiDownload, setVerbose, buildAuth, USER_AGENT,
+    setMaxRetryWait, resolveMaxRetryWait, setJsonProgress,
+};

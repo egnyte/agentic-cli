@@ -6,13 +6,13 @@ const https = require('https');
 const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
-const { apiDownload } = require('../src/lib/http');
+const { apiDownload, setMaxRetryWait, setJsonProgress } = require('../src/lib/http');
 
 describe('resumable downloads (offline)', function() {
     const content = Buffer.from('resume download test content');
     const prefix = content.slice(0, Math.floor(content.length / 2));
     const options = { domain: 'https://testdomain.egnyte.com', apiPath: '/pubapi/v1/fs-content/Shared/resume.txt' };
-    let directory, outPath, requestHeaders, response, queuedResponses, requestError, delays;
+    let directory, outPath, requestHeaders, response, queuedResponses, requestError, delays, stderrOutput;
 
     beforeEach(function() {
         directory = fs.mkdtempSync(path.join(os.tmpdir(), 'egnyte-download-spec-'));
@@ -21,6 +21,8 @@ describe('resumable downloads (offline)', function() {
         queuedResponses = [];
         requestError = null;
         delays = [];
+        stderrOutput = [];
+        spyOn(process.stderr, 'write').and.callFake(function(chunk) { stderrOutput.push(String(chunk)); return true; });
         spyOn(global, 'setTimeout').and.callFake(function(fn, ms) {
             delays.push(ms);
             fn();
@@ -48,6 +50,8 @@ describe('resumable downloads (offline)', function() {
     });
 
     afterEach(function() {
+        setMaxRetryWait(60);
+        setJsonProgress(false);
         if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
         fs.rmdirSync(directory);
     });
@@ -112,6 +116,65 @@ describe('resumable downloads (offline)', function() {
             expect(requestHeaders.Range).toBe('bytes=' + prefix.length + '-');
             expect(fs.readFileSync(outPath)).toEqual(content);
         });
+    });
+
+    it('reports each 429 wait on stderr', async function() {
+        queuedResponses = [
+            { status: 429, body: Buffer.from('{"message":"Spike arrest violation"}'), headers: { 'retry-after': '7' } },
+            { status: 429, body: Buffer.from('{"message":"Spike arrest violation"}') },
+            { status: 200, body: content },
+        ];
+        await apiDownload(options, outPath, false);
+        expect(delays).toEqual([7000, 2000]);
+        expect(stderrOutput).toEqual([
+            '[retry] HTTP 429, waiting 7s (1/3)\n',
+            '[retry] HTTP 429, waiting 2s (2/3)\n',
+        ]);
+    });
+
+    it('reports each 429 wait as a JSON event with --json-progress', async function() {
+        setJsonProgress(true);
+        queuedResponses = [
+            { status: 429, body: Buffer.from('{"message":"Spike arrest violation"}'), headers: { 'retry-after': '7' } },
+            { status: 200, body: content },
+        ];
+        await apiDownload(options, outPath, false);
+        expect(stderrOutput).toEqual(['{"type":"retry","status":429,"wait":7,"attempt":1,"max":3}\n']);
+    });
+
+    it('rejects with the 429 CLIError instead of crashing when the Retry-After is beyond the Date range', async function() {
+        fs.writeFileSync(outPath, prefix);
+        response = { status: 429, body: Buffer.from('{"message":"Developer Over Rate"}'), headers: { 'retry-after': '8640000000000' } };
+        await expectAsync(apiDownload(options, outPath, true)).toBeRejectedWith(
+            jasmine.objectContaining({ statusCode: 429, retryAfter: 8640000000000, message: 'HTTP 429: rate limited, retry after 8640000000000s' })
+        );
+        expect(https.request.calls.count()).toBe(1);
+        expect(delays).toEqual([]);
+        expect(fs.readFileSync(outPath)).toEqual(prefix);
+    });
+
+    it('fails at once on a Retry-After over the max retry wait and preserves the partial file', async function() {
+        fs.writeFileSync(outPath, prefix);
+        response = { status: 429, body: Buffer.from('{"message":"Developer Over Rate"}'), headers: { 'retry-after': '53984' } };
+        await expectAsync(apiDownload(options, outPath, true)).toBeRejectedWith(
+            jasmine.objectContaining({ statusCode: 429, retryAfter: 53984, message: jasmine.stringMatching(/^HTTP 429: rate limited, retry after \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/) })
+        );
+        expect(https.request.calls.count()).toBe(1);
+        expect(delays).toEqual([]);
+        expect(stderrOutput).toEqual([]);
+        expect(fs.readFileSync(outPath)).toEqual(prefix);
+    });
+
+    it('waits a long Retry-After when the max retry wait is raised', async function() {
+        setMaxRetryWait(600);
+        queuedResponses = [
+            { status: 429, body: Buffer.from('{"message":"Developer Over Rate"}'), headers: { 'retry-after': '300' } },
+            { status: 200, body: content },
+        ];
+        await apiDownload(options, outPath, false);
+        expect(delays).toEqual([300000]);
+        expect(stderrOutput).toEqual(['[retry] HTTP 429, waiting 300s (1/3)\n']);
+        expect(fs.readFileSync(outPath)).toEqual(content);
     });
 
     it('gives up after four attempts with exponential backoff and preserves the partial file', async function() {

@@ -305,12 +305,24 @@ integrationDescribe("egnyte ai", function() {
             expect(json.body_params.question).toBeDefined();
             expect(json.body_params.includeCitations).toBeDefined();
             expect(json.endpoint).toContain("/kb/");
+            expect(json.deprecated).toContain("agents.ask");
         });
     });
 
     // ── ai list-kbs ──────────────────────────────────────────────────────────────
 
     describe("ai list-kbs", function() {
+        // Accounts migrated to Agents get HTTP 410 (KBA_MIGRATED_TO_AGENTS); others still list KBs.
+        function expectListedOrMigrated(result) {
+            if (result.status === 0) {
+                expect(result.stdout).toBeValidJSON();
+                return;
+            }
+            expect(result.status).toBe(1);
+            expect(result.errorJson().status).toBe(410);
+            expect(result.errorJson().error).toContain("KBA_MIGRATED_TO_AGENTS");
+        }
+
         it("--dry-run prints curl POST to /pubapi/v1/ai/kb/list", function() {
             var result = spawnCLI(["ai", "list-kbs", "--dry-run"], DUMMY_OPTS);
             expect(result.status).toBe(0);
@@ -318,10 +330,9 @@ integrationDescribe("egnyte ai", function() {
             expect(result.stdout).toContain("/pubapi/v1/ai/kb/list");
         });
 
-        it("returns valid JSON", function() {
+        it("returns valid JSON, or HTTP 410 on a migrated account", function() {
             var result = spawnCLI(["ai", "list-kbs"], REAL_OPTS);
-            expect(result.status).toBe(0);
-            expect(result.stdout).toBeValidJSON();
+            expectListedOrMigrated(result);
         });
 
         it("accepts sort and filter params via --json", function() {
@@ -331,8 +342,7 @@ integrationDescribe("egnyte ai", function() {
                     "--fields", "content"],
                 REAL_OPTS
             );
-            expect(result.status).toBe(0);
-            expect(result.stdout).toBeValidJSON();
+            expectListedOrMigrated(result);
         });
 
         it("does NOT require --yes (read-only operation)", function() {
@@ -350,6 +360,7 @@ integrationDescribe("egnyte ai", function() {
             expect(json.body_params.status).toBeDefined();
             expect(json.body_params.sortBy).toBeDefined();
             expect(json.endpoint).toContain("/kb/list");
+            expect(json.deprecated).toContain("agents.list");
         });
     });
 
@@ -422,4 +433,44 @@ integrationDescribe("egnyte ai", function() {
         });
     });
 
+});
+
+// ── ai list-kbs / ai ask-kb deprecation warning ─────────────────────────────
+// Offline: --dry-run and argument errors make no network call.
+
+describe("egnyte ai deprecated Knowledge Base commands", function() {
+
+    var DUMMY_OPTS = { token: "dummytoken123", domain: "https://testdomain.egnyte.com" };
+
+    [
+        { args: ["ai", "list-kbs", "--dry-run"],                   endpoint: "/pubapi/v1/ai/kb/list",      replacement: "Use: egnyte agents list" },
+        { args: ["ai", "ask-kb", "kb-123", "Refunds?", "--dry-run"], endpoint: "/pubapi/v1/ai/kb/kb-123/ask", replacement: "Use: egnyte agents ask <agentId>" },
+    ].forEach(function(c) {
+        it(c.args.slice(0, 2).join(" ") + " still runs and warns on stderr only", function() {
+            var result = spawnCLI(c.args, DUMMY_OPTS);
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain(c.endpoint);
+            expect(result.stdout).not.toContain("deprecated");
+            expect(result.stderr).toContain("Warning: " + c.args.slice(0, 2).join(" ") + " is deprecated");
+            expect(result.stderr).toContain(c.replacement);
+        });
+    });
+
+    it("warns before the usage error when arguments are missing", function() {
+        var result = spawnCLI(["ai", "ask-kb"], DUMMY_OPTS);
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("Warning: ai ask-kb is deprecated");
+        expect(result.errorJson().error).toMatch(/^Usage: egnyte ai ask-kb/);
+    });
+
+    it("--json-progress keeps stderr newline-delimited JSON (warning event)", function() {
+        var result = spawnCLI(["ai", "list-kbs", "--dry-run", "--json-progress"], DUMMY_OPTS);
+        expect(result.status).toBe(0);
+        var lines = result.stderr.split("\n").filter(Boolean);
+        expect(lines.length).toBe(1);
+        var event = JSON.parse(lines[0]);
+        expect(event.type).toBe("warning");
+        expect(event.message).toContain("ai list-kbs is deprecated");
+        expect(event.message).toContain("Use: egnyte agents list");
+    });
 });

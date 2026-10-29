@@ -293,12 +293,23 @@ async function cmdAiStatus(args) {
     await printAssistantStatus({ domain, token, auth_source }, executionId, args, wait, false);
 }
 
-// ── ai list-kbs ───────────────────────────────────────────────────────────────
+// Egnyte is migrating Knowledge Bases to Agents. The /pubapi/v1/ai/kb endpoints
+// still answer on accounts not migrated yet and return HTTP 410
+// (KBA_MIGRATED_TO_AGENTS) on migrated ones, so ai list-kbs / ai ask-kb keep
+// working and warn on stderr. Remove both in a future release.
+// With --json-progress stderr is newline-delimited JSON, so the warning is an event too.
+function warnKbDeprecated(args, command, replacement) {
+    const message = 'ai ' + command + ' is deprecated: Egnyte is migrating Knowledge Bases to Agents. Use: ' + replacement;
+    info(args['json-progress'] ? JSON.stringify({ type: 'warning', message }) : 'Warning: ' + message);
+}
+
+// ── ai list-kbs (deprecated) ──────────────────────────────────────────────────
 //
 // POST /pubapi/v1/ai/kb/list
 // Usage: egnyte ai list-kbs [--json '{"status":["ACTIVE"],"sortBy":["name"],"sortDirection":["ASC"]}'] [--fields content]
 
 async function cmdAiListKbs(args) {
+    warnKbDeprecated(args, 'list-kbs', 'egnyte agents list --fields agentId,name,status,category');
     const { token, domain, auth_source } = await resolveAuth(args);
 
     const extra   = parseJsonArg(args.json);
@@ -314,12 +325,13 @@ async function cmdAiListKbs(args) {
     out(applyFields(result, args.fields));
 }
 
-// ── ai ask-kb ─────────────────────────────────────────────────────────────────
+// ── ai ask-kb (deprecated) ────────────────────────────────────────────────────
 //
 // POST /pubapi/v1/ai/kb/{kb-id}/ask
 // Usage: egnyte ai ask-kb <kb-id> "<question>" [--json '{"includeCitations":true}'] [--fields response,citations]
 
 async function cmdAiAskKb(args) {
+    warnKbDeprecated(args, 'ask-kb', 'egnyte agents ask <agentId> "<question>"');
     const { token, domain, auth_source } = await resolveAuth(args);
 
     const kbId     = args._[2];

@@ -10,6 +10,9 @@
  *   errorCode    — API error code string (e.g. "access_denied")
  *   requestId    — server-side request ID for support tickets
  *   contextInfo  — extra detail object from the API body
+ *   retryAfter   — seconds from the response's Retry-After header
+ *   retryAt      — ISO-8601 UTC time when retryAfter elapses
+ *   rateLimit    — rate-limit headers of the response (--verbose, 429 only)
  */
 class CLIError extends Error {
     constructor(msg, opts) {
@@ -20,6 +23,9 @@ class CLIError extends Error {
         if (opts.errorCode)    this.errorCode   = opts.errorCode;
         if (opts.requestId)    this.requestId   = opts.requestId;
         if (opts.contextInfo)  this.contextInfo = opts.contextInfo;
+        if (opts.retryAfter)   this.retryAfter  = opts.retryAfter;
+        if (opts.retryAt)      this.retryAt     = opts.retryAt;
+        if (opts.rateLimit)    this.rateLimit   = opts.rateLimit;
         if (opts.cause)        this.cause       = opts.cause;
     }
 }
@@ -32,19 +38,7 @@ function out(data) {
 /** Write structured JSON error to stderr and exit. Only called from the top-level dispatcher. */
 function fatal(err, code) {
     code = (code === undefined) ? 1 : code;
-    const out = {};
-
-    if (err && typeof err === 'object' && err.name === 'CLIError') {
-        out.error = err.message;
-        if (err.statusCode)   out.status      = err.statusCode;
-        if (err.errorCode)    out.code         = err.errorCode;
-        if (err.requestId)    out.request_id   = err.requestId;
-        if (err.contextInfo)  out.context_info = err.contextInfo;
-    } else {
-        out.error = (err && err.message) ? err.message : String(err);
-    }
-
-    process.stderr.write(JSON.stringify(out) + '\n');
+    process.stderr.write(JSON.stringify(serializeError(err)) + '\n');
     process.exit(code);
 }
 
@@ -53,18 +47,31 @@ function info(msg) {
     process.stderr.write(msg + '\n');
 }
 
+/** POSIX single-quote a value so apostrophes cannot break out of the quoting. */
+function shellQuote(s) {
+    return "'" + String(s).replace(/'/g, "'\\''") + "'";
+}
+
+/**
+ * Encode the URL like apiRequest() does (new URL()), but keep placeholders such as
+ * <entry-id> readable. Egnyte forbids < and > in names, so %3C...%3E is only ever a placeholder.
+ */
+function previewUrl(url) {
+    return new URL(url).href.replace(/%3C([\w-]+)%3E/g, '<$1>');
+}
+
 function formatDryRun(opts) {
     const { method, url, body, bodyType, localFile } = opts;
     const parts = [
-        "curl -X " + method + " '" + url + "'",
+        'curl -X ' + method + ' ' + shellQuote(previewUrl(url)),
         "  -H 'Authorization: ***'",
     ];
     if (bodyType === 'json') {
         parts.push("  -H 'Content-Type: application/json'");
-        parts.push("  -d '" + JSON.stringify(body) + "'");
+        parts.push('  -d ' + shellQuote(JSON.stringify(body)));
     } else if (bodyType === 'multipart') {
         parts.push("  -H 'Content-Type: multipart/form-data'");
-        parts.push("  -F 'file=@" + localFile + "'");
+        parts.push('  -F ' + shellQuote('file=@' + localFile));
     }
     return parts.join(' \\\n');
 }
@@ -116,6 +123,9 @@ function serializeError(err) {
     if (err && err.statusCode)   payload.status = err.statusCode;
     if (err && err.errorCode)    payload.code = err.errorCode;
     if (err && err.requestId)    payload.request_id = err.requestId;
+    if (err && err.retryAfter)   payload.retry_after = err.retryAfter;
+    if (err && err.retryAt)      payload.retry_at = err.retryAt;
+    if (err && err.rateLimit)    payload._ratelimit = err.rateLimit;
     if (err && err.contextInfo)  payload.context_info = err.contextInfo;
     return payload;
 }

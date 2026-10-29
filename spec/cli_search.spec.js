@@ -114,7 +114,7 @@ integrationDescribe("egnyte search advanced", function() {
         var json = result.json();
         expect(json.query_params).toBeDefined();
         expect(json.query_params.modified_after).toBeDefined();
-        expect(json.query_params.custom_metadata).toBeDefined();
+        expect(json.query_params.custom_metadata).toBeUndefined();
     });
 
 });

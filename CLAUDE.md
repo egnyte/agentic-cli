@@ -198,11 +198,10 @@ egnyte ai ask-document /Shared/Contracts/acme.pdf "What are the payment terms?" 
 # Summarize a file (path auto-resolved to entry-id)
 egnyte ai summarize /Shared/Reports/annual-report.pdf --fields response
 
-# List available Knowledge Bases
-egnyte ai list-kbs --json '{"status":["ACTIVE"],"sortBy":["name"],"sortDirection":["ASC"]}' --fields content
-
-# Query a specific Knowledge Base
-egnyte ai ask-kb <kb-id> "What is the refund policy?" --json '{"includeCitations":true}' --fields response,citations
+# Knowledge Bases are deprecated: ai list-kbs / ai ask-kb print a warning and migrated
+# accounts get HTTP 410 (KBA_MIGRATED_TO_AGENTS) — use agents list / agents ask instead.
+# If agents returns HTTP 403 (AGENTS_FEATURE_NOT_ENABLED), the account is not migrated yet:
+# ai list-kbs / ai ask-kb still work there.
 
 # Hybrid semantic + keyword search
 egnyte ai hybrid-search "quarterly report" --json '{"semanticWeight":0.7,"folderPath":"/Shared/Finance","limit":10}' --fields results
@@ -239,8 +238,8 @@ egnyte fs set-metadata --bulk-file-path ./metadata.csv --parallelism 2 --yes
 
 egnyte search "quarterly report" --json '{"count": 20}' --fields results.name,results.path,results.size
 
-# Advanced search — metadata filters, date ranges, folder scoping
-egnyte search advanced "contract" --json '{"folder":"/Shared","modified_after":"2024-01-01","custom_metadata":{"status":"signed"}}' --fields results.name,results.path
+# Advanced search — date ranges, folder scoping
+egnyte search advanced "contract" --json '{"folder":"/Shared","modified_after":"2024-01-01"}' --fields results.name,results.path
 
 # ── Links ─────────────────────────────────────────────────────────────────────
 
@@ -312,14 +311,16 @@ Increment `offset` by `count` until `files` and `folders` are both empty.
 
 ## Rate limiting
 
-Egnyte enforces a per-token QPS limit (varies by plan). Add `--verbose` to surface remaining quota:
+Egnyte enforces a per-token QPS limit and a daily API quota. The defaults are 2 QPS and 1000 calls per day per token, reset at 00:00 UTC (varies by plan). Add `--verbose` to surface remaining quota:
 
 ```bash
 egnyte fs get /Shared/report.pdf --verbose
-# includes: "_ratelimit": { "qps_limit": 200, "qps_used": 1, "qps_remaining": 199, "quota_limit": 20000000, "quota_used": 42 }
+# includes: "_ratelimit": { "qps_limit": 2, "qps_used": 1, "qps_remaining": 1, "quota_limit": 1000, "quota_used": 42 }
 ```
 
 Check `_ratelimit.qps_remaining` in loops and pause when it hits 0.
+
+On `429` the CLI retries up to 3 times and prints each wait on stderr (`[retry] HTTP 429, waiting 1s (1/3)`; with `--json-progress` a `{"type":"retry","status":429,"wait":1,"attempt":1,"max":3}` line instead). A `Retry-After` over 60 s usually means the daily quota is used up: the CLI exits 1 at once with `{"error":"HTTP 429: rate limited, retry after <ISO time>","status":429,"retry_after":<seconds>,"retry_at":"<ISO time>"}`. Stop and report `retry_at` to the user instead of retrying in a loop. `--max-retry-wait <seconds>` (or `EGNYTE_MAX_RETRY_WAIT`) raises the wait cap; `--verbose` adds `_ratelimit` to the 429 error.
 
 
 ## AI Safeguards

@@ -121,6 +121,23 @@ describe("egnyte whoami", function() {
             expect(result.status).toBe(0);
             expect(result.stdout).toContain("egnyte");
         });
+
+        // API drift (spec 9f2ca872, findings 5486ea05564f, d8c2f0cba503): GET /v1/userinfo returns
+        // id, username, first_name, last_name, plus email and user_type (seen on a live domain);
+        // there is no "active" field.
+        // stdout goes to a file: through a pipe the help text is cut at 8 KB, before the examples.
+        it("userinfo example asks only for fields the API returns", function() {
+            var outFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "egnyte-help-")), "help.txt");
+            var fd = fs.openSync(outFile, "w");
+            require("child_process").spawnSync("node", [path.resolve(__dirname, "../bin/egnyte"), "--help"], {
+                stdio: ["ignore", fd, "ignore"],
+                env:   Object.assign({}, process.env, { EGNYTE_TOKEN: "x", EGNYTE_DOMAIN: "https://y.egnyte.com" }),
+            });
+            fs.closeSync(fd);
+            var help = fs.readFileSync(outFile, "utf8");
+            expect(help).toContain("egnyte userinfo --fields username,email,user_type");
+            expect(help).not.toContain("egnyte userinfo --fields username,email,active");
+        });
     });
 
     describe("with --token and --domain flags", function() {

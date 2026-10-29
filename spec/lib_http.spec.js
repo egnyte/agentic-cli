@@ -7,7 +7,8 @@ const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
 
-const { apiRequest, apiDownload, buildAuth, buildUrl } = require('../src/lib/http');
+const { apiRequest, apiDownload, httpRequest, buildAuth, buildUrl,
+        setVerbose, setMaxRetryWait, resolveMaxRetryWait, setJsonProgress } = require('../src/lib/http');
 const { CLIError } = require('../src/lib/output');
 
 describe('http helpers', function() {
@@ -17,6 +18,8 @@ describe('http helpers', function() {
     let queuedResponses;
     let callMethods;
     let callHeaders;
+    let delays;
+    let stderrOutput;
 
     beforeEach(function() {
         originalRequest = https.request;
@@ -25,9 +28,15 @@ describe('http helpers', function() {
         queuedResponses = [];
         callMethods = [];
         callHeaders = [];
+        delays = [];
+        stderrOutput = [];
+
+        // Capture what the CLI tells the user on stderr (retry notices) instead of printing it
+        spyOn(process.stderr, 'write').and.callFake(function(chunk) { stderrOutput.push(String(chunk)); return true; });
 
         Math.random = function() { return 0; };
-        global.setTimeout = function(fn) {
+        global.setTimeout = function(fn, ms) {
+            delays.push(ms);
             fn();
             return 0;
         };
@@ -69,6 +78,9 @@ describe('http helpers', function() {
         https.request = originalRequest;
         global.setTimeout = originalSetTimeout;
         Math.random = originalMathRandom;
+        setVerbose(false);
+        setMaxRetryWait(60);
+        setJsonProgress(false);
     });
 
     it('retries GET requests on 500 responses and eventually returns the success body', async function() {
@@ -286,5 +298,330 @@ describe('http helpers', function() {
         } finally {
             try { fs.unlinkSync(outPath); } catch (_) {}
         }
+    });
+
+    describe('429 handling', function() {
+        const NOW = Date.UTC(2026, 9, 15, 9, 0, 16);
+        const JSON_HEADERS = { 'content-type': 'application/json' };
+        const request = function(overrides) {
+            return apiRequest(Object.assign({
+                domain: 'https://testdomain.egnyte.com',
+                token: 'token',
+                method: 'POST',
+                apiPath: '/pubapi/v1/fs-content/Shared/report.txt',
+            }, overrides));
+        };
+
+        beforeEach(function() {
+            spyOn(Date, 'now').and.returnValue(NOW);
+        });
+
+        it('waits out a Retry-After of 60 s or less and reports each wait on stderr', async function() {
+            queuedResponses.push(
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '60' } },
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '5' } },
+                { status: 200, body: '{"ok":true}', headers: JSON_HEADERS }
+            );
+
+            expect(await request()).toEqual({ ok: true });
+            expect(delays).toEqual([60000, 5000]);
+            expect(stderrOutput).toEqual([
+                '[retry] HTTP 429, waiting 60s (1/3)\n',
+                '[retry] HTTP 429, waiting 5s (2/3)\n',
+            ]);
+        });
+
+        it('fails at once, without waiting, on a Retry-After over 60 s', async function() {
+            queuedResponses.push(
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '53984' } }
+            );
+
+            await expectAsync(request()).toBeRejectedWith(jasmine.objectContaining({
+                name: 'CLIError',
+                message: 'HTTP 429: rate limited, retry after 2026-10-16T00:00:00Z',
+                statusCode: 429,
+                retryAfter: 53984,
+                retryAt: '2026-10-16T00:00:00Z',
+            }));
+            expect(callMethods).toEqual(['POST']);
+            expect(delays).toEqual([]);
+            expect(stderrOutput).toEqual([]);
+        });
+
+        it('reports each wait as a newline-delimited JSON event with --json-progress', async function() {
+            setJsonProgress(true);
+            queuedResponses.push(
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '5' } },
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}' },
+                { status: 200, body: '{"ok":true}', headers: JSON_HEADERS }
+            );
+
+            expect(await request()).toEqual({ ok: true });
+            expect(stderrOutput.map(function(line) { return JSON.parse(line); })).toEqual([
+                { type: 'retry', status: 429, wait: 5, attempt: 1, max: 3 },
+                { type: 'retry', status: 429, wait: 2, attempt: 2, max: 3 },
+            ]);
+            expect(stderrOutput.every(function(line) { return /\n$/.test(line); })).toBe(true);
+        });
+
+        it('keeps the 429 CLIError, without retryAt, when the Retry-After is beyond the Date range', async function() {
+            queuedResponses.push(
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '8640000000000' } }
+            );
+
+            let error;
+            try { await request(); } catch (err) { error = err; }
+
+            expect(error instanceof CLIError).toBe(true);
+            expect(error.statusCode).toBe(429);
+            expect(error.retryAfter).toBe(8640000000000);
+            expect(error.retryAt).toBeUndefined();
+            expect(error.message).toBe('HTTP 429: rate limited, retry after 8640000000000s');
+            expect(callMethods.length).toBe(1);
+            expect(delays).toEqual([]);
+        });
+
+        it('falls back to 1 s, 2 s, 4 s backoff when Retry-After is missing, reporting each wait', async function() {
+            queuedResponses.push(
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}' },
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}' },
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}' },
+                { status: 200, body: '{"ok":true}', headers: JSON_HEADERS }
+            );
+
+            expect(await request()).toEqual({ ok: true });
+            expect(delays).toEqual([1000, 2000, 4000]);
+            expect(stderrOutput).toEqual([
+                '[retry] HTTP 429, waiting 1s (1/3)\n',
+                '[retry] HTTP 429, waiting 2s (2/3)\n',
+                '[retry] HTTP 429, waiting 4s (3/3)\n',
+            ]);
+        });
+
+        it('gives up after 3 retries with the plain 429 error and no retry fields when Retry-After is missing', async function() {
+            for (let i = 0; i < 4; i++) queuedResponses.push({ status: 429, body: '{"errorMessage":"Developer Over Rate"}' });
+
+            let error;
+            try { await request(); } catch (err) { error = err; }
+
+            expect(error.message).toBe('HTTP 429: Developer Over Rate');
+            expect(error.statusCode).toBe(429);
+            expect(error.retryAfter).toBeUndefined();
+            expect(error.retryAt).toBeUndefined();
+            expect(callMethods.length).toBe(4);
+        });
+
+        it('keeps the short Retry-After on the error when the retries run out', async function() {
+            for (let i = 0; i < 4; i++) {
+                queuedResponses.push({ status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '20' } });
+            }
+
+            await expectAsync(request()).toBeRejectedWith(jasmine.objectContaining({
+                message: 'HTTP 429: Developer Over Rate',
+                retryAfter: 20,
+                retryAt: '2026-10-15T09:00:36Z',
+            }));
+            expect(delays).toEqual([20000, 20000, 20000]);
+        });
+
+        it('waits a Retry-After over 60 s when --max-retry-wait allows it', async function() {
+            setMaxRetryWait(300);
+            queuedResponses.push(
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '120' } },
+                { status: 200, body: '{"ok":true}', headers: JSON_HEADERS }
+            );
+
+            expect(await request()).toEqual({ ok: true });
+            expect(delays).toEqual([120000]);
+            expect(stderrOutput).toEqual(['[retry] HTTP 429, waiting 120s (1/3)\n']);
+        });
+
+        it('still fails at once when the Retry-After is over a raised --max-retry-wait', async function() {
+            setMaxRetryWait(300);
+            queuedResponses.push(
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '301' } }
+            );
+
+            await expectAsync(request()).toBeRejectedWith(jasmine.objectContaining({ statusCode: 429, retryAfter: 301 }));
+            expect(callMethods.length).toBe(1);
+            expect(delays).toEqual([]);
+        });
+
+        it('never waits with --max-retry-wait 0', async function() {
+            setMaxRetryWait(0);
+            queuedResponses.push({ status: 429, body: '{"errorMessage":"Developer Over Rate"}' });
+
+            await expectAsync(request()).toBeRejectedWith(jasmine.objectContaining({
+                message: 'HTTP 429: Developer Over Rate',
+                statusCode: 429,
+            }));
+            expect(callMethods.length).toBe(1);
+            expect(delays).toEqual([]);
+            expect(stderrOutput).toEqual([]);
+        });
+
+        it('keeps the plain 429 message for a short Retry-After with --max-retry-wait 0', async function() {
+            setMaxRetryWait(0);
+            queuedResponses.push({ status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '1' } });
+
+            await expectAsync(request()).toBeRejectedWith(jasmine.objectContaining({
+                message: 'HTTP 429: Developer Over Rate',
+                statusCode: 429,
+                retryAfter: 1,
+                retryAt: '2026-10-15T09:00:17Z',
+            }));
+            expect(callMethods.length).toBe(1);
+            expect(delays).toEqual([]);
+        });
+
+        it('still uses the retry-after message for a Retry-After over 60 s with a lowered --max-retry-wait', async function() {
+            setMaxRetryWait(5);
+            queuedResponses.push({ status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '120' } });
+
+            await expectAsync(request()).toBeRejectedWith(jasmine.objectContaining({
+                message: 'HTTP 429: rate limited, retry after 2026-10-15T09:02:16Z',
+            }));
+        });
+
+        it('includes _ratelimit in the 429 error with --verbose', async function() {
+            setVerbose(true);
+            queuedResponses.push({
+                status: 429,
+                body: '{"errorMessage":"Developer Over Rate"}',
+                headers: {
+                    'retry-after': '53984',
+                    'x-accesstoken-qps-allotted': '2',
+                    'x-accesstoken-qps-current': '2',
+                    'x-accesstoken-quota-allotted': '1000',
+                    'x-accesstoken-quota-current': '1000',
+                },
+            });
+
+            await expectAsync(request()).toBeRejectedWith(jasmine.objectContaining({
+                statusCode: 429,
+                rateLimit: {
+                    qps_limit: 2, qps_used: 2, qps_remaining: 0,
+                    quota_limit: 1000, quota_used: 1000, retry_after: 53984,
+                },
+            }));
+        });
+
+        it('leaves _ratelimit off the 429 error without --verbose', async function() {
+            queuedResponses.push({
+                status: 429,
+                body: '{"errorMessage":"Developer Over Rate"}',
+                headers: { 'retry-after': '53984', 'x-accesstoken-quota-current': '1000' },
+            });
+
+            let error;
+            try { await request(); } catch (err) { error = err; }
+
+            expect(error.rateLimit).toBeUndefined();
+        });
+    });
+
+    describe('httpRequest (raw requests such as upload chunks)', function() {
+        const NOW = Date.UTC(2026, 9, 15, 9, 0, 16);
+        const options = { hostname: 'testdomain.egnyte.com', path: '/pubapi/v1/fs-content-chunked/Shared/big.bin', method: 'POST', headers: {} };
+        const chunk = Buffer.from('chunk');
+
+        beforeEach(function() {
+            spyOn(Date, 'now').and.returnValue(NOW);
+        });
+
+        it('waits out a short 429, announces it on stderr and returns the next response', async function() {
+            queuedResponses.push(
+                { status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '5' } },
+                { status: 200, body: '{"ok":true}', headers: { 'x-egnyte-upload-id': 'upl-1' } }
+            );
+
+            const resp = await httpRequest(options, chunk, 1000);
+
+            expect(resp.status).toBe(200);
+            expect(resp.headers['x-egnyte-upload-id']).toBe('upl-1');
+            expect(callMethods).toEqual(['POST', 'POST']);
+            expect(delays).toEqual([5000]);
+            expect(stderrOutput).toEqual(['[retry] HTTP 429, waiting 5s (1/3)\n']);
+        });
+
+        it('gives up after 3 retries with the 429 CLIError', async function() {
+            for (let i = 0; i < 4; i++) {
+                queuedResponses.push({ status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '2' } });
+            }
+
+            await expectAsync(httpRequest(options, chunk)).toBeRejectedWith(jasmine.objectContaining({
+                name: 'CLIError',
+                message: 'HTTP 429: Developer Over Rate',
+                statusCode: 429,
+                retryAfter: 2,
+                retryAt: '2026-10-15T09:00:18Z',
+            }));
+            expect(callMethods.length).toBe(4);
+            expect(delays).toEqual([2000, 2000, 2000]);
+        });
+
+        it('fails at once, without waiting, on a Retry-After over 60 s', async function() {
+            queuedResponses.push({ status: 429, body: '{"errorMessage":"Developer Over Rate"}', headers: { 'retry-after': '53984' } });
+
+            await expectAsync(httpRequest(options, chunk)).toBeRejectedWith(jasmine.objectContaining({
+                message: 'HTTP 429: rate limited, retry after 2026-10-16T00:00:00Z',
+                statusCode: 429,
+                retryAfter: 53984,
+            }));
+            expect(callMethods.length).toBe(1);
+            expect(delays).toEqual([]);
+            expect(stderrOutput).toEqual([]);
+        });
+
+        it('returns other error statuses untouched for the caller to handle', async function() {
+            queuedResponses.push({ status: 500, body: '{"errorMessage":"boom"}' });
+
+            const resp = await httpRequest(options, chunk);
+
+            expect(resp.status).toBe(500);
+            expect(callMethods.length).toBe(1);
+            expect(delays).toEqual([]);
+        });
+    });
+
+    describe('resolveMaxRetryWait', function() {
+        it('defaults to 60 seconds', function() {
+            expect(resolveMaxRetryWait({}, {})).toBe(60);
+        });
+
+        it('reads EGNYTE_MAX_RETRY_WAIT', function() {
+            expect(resolveMaxRetryWait({}, { EGNYTE_MAX_RETRY_WAIT: '300' })).toBe(300);
+        });
+
+        it('prefers --max-retry-wait over the environment', function() {
+            expect(resolveMaxRetryWait({ 'max-retry-wait': '5' }, { EGNYTE_MAX_RETRY_WAIT: '300' })).toBe(5);
+        });
+
+        it('accepts 0 as "never wait"', function() {
+            expect(resolveMaxRetryWait({ 'max-retry-wait': '0' }, {})).toBe(0);
+        });
+
+        it('ignores an empty EGNYTE_MAX_RETRY_WAIT', function() {
+            expect(resolveMaxRetryWait({}, { EGNYTE_MAX_RETRY_WAIT: '' })).toBe(60);
+        });
+
+        it('accepts the 86400 s upper bound', function() {
+            expect(resolveMaxRetryWait({ 'max-retry-wait': '86400' }, {})).toBe(86400);
+        });
+
+        [['--max-retry-wait', { 'max-retry-wait': 'abc' }, {}],
+         ['--max-retry-wait', { 'max-retry-wait': true }, {}],
+         ['--max-retry-wait', { 'max-retry-wait': '1.5' }, {}],
+         ['--max-retry-wait', { 'max-retry-wait': '86401' }, {}],
+         ['--max-retry-wait', { 'max-retry-wait': '9999999' }, {}],
+         ['EGNYTE_MAX_RETRY_WAIT', {}, { EGNYTE_MAX_RETRY_WAIT: '-1' }],
+         ['EGNYTE_MAX_RETRY_WAIT', {}, { EGNYTE_MAX_RETRY_WAIT: '86401' }],
+        ].forEach(function(c) {
+            it('rejects an invalid value from ' + c[0], function() {
+                expect(function() { resolveMaxRetryWait(c[1], c[2]); })
+                    .toThrowError(CLIError, 'Invalid ' + c[0] + ': expected whole seconds from 0 to 86400 (0 = never wait), got ' +
+                        String(c[1]['max-retry-wait'] !== undefined ? c[1]['max-retry-wait'] : c[2].EGNYTE_MAX_RETRY_WAIT));
+            });
+        });
     });
 });

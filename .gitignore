@@ -6,3 +6,4 @@ spec/fixtures/captures/
 *.log
 .npm
 TEST*.xml
+.claude/

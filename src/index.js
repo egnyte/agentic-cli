@@ -2,7 +2,8 @@
 
 const { parseArgs }                              = require('./lib/args');
 const { fatal }                                  = require('./lib/output');
-const { setVerbose }                             = require('./lib/http');
+const { setVerbose, setMaxRetryWait,
+        resolveMaxRetryWait, setJsonProgress }   = require('./lib/http');
 const { cmdLogin, cmdLogout,
         cmdWhoami, cmdProfiles,
         cmdUserInfo }                            = require('./commands/auth');
@@ -182,7 +183,7 @@ File System:
 
 Search:
   search <query> [--json '{}']                 Search for files and folders
-  search advanced <query> [--json '{}']        Advanced search with metadata/date filters
+  search advanced <query> [--json '{}']        Advanced search with date and field filters
 
 Links:
   links create --json '{}'               Create a shared link
@@ -250,8 +251,8 @@ AI:
   ai status <executionId> [--wait]                 Check execution status of a prior ai ask (--wait polls until it stops)
   ai ask-document <path> "<question>" [--json '{}'] Ask a question about a specific file
   ai summarize <path>                              Summarize the content of a file
-  ai list-kbs [--json '{}']                        List available Knowledge Bases
-  ai ask-kb <kb-id> "<question>" [--json '{}']     Query a specific Knowledge Base
+  ai list-kbs [--json '{}']                        Deprecated — use agents list
+  ai ask-kb <kb-id> "<question>" [--json '{}']     Deprecated — use agents ask
   ai hybrid-search "<query>" [--json '{}']         Semantic + keyword hybrid search
 
 User Info:
@@ -286,6 +287,8 @@ Flags:
   --json-progress       Write newline-delimited JSON progress events to stderr
   --resume              Resume an interrupted download or chunked upload
   --verbose             Include rate-limit headers in output (_ratelimit field)
+  --max-retry-wait <s>  Longest 429 Retry-After to wait out (default 60, max 86400; 0 = never wait). A longer
+                        Retry-After fails at once with retry_after / retry_at. Env: EGNYTE_MAX_RETRY_WAIT
   --profile <name>      Use a named profile instead of default
   --token / --domain    Override stored credentials for one call
 
@@ -305,7 +308,7 @@ Examples:
   egnyte request /pubapi/v1/userinfo
   egnyte request /pubapi/v2/users -X GET --json '{"count":10}' --fields id,username,email
   egnyte perms get-by-user jsmith --json '{"folder":"/Shared/Finance"}'
-  egnyte userinfo --fields username,email,active
+  egnyte userinfo --fields username,email,user_type
   egnyte fs upload-chunked /Shared/bigfile.iso --file ./bigfile.iso --dry-run
   egnyte fs delete --bulk-file-path ./delete.csv --dry-run
   egnyte fs upload --bulk-file-path ./uploads.csv --parallelism 2 --progress --yes
@@ -335,8 +338,11 @@ async function main() {
     const cmd   = args._[1];
 
     if (args.verbose) setVerbose(true);
+    if (args['json-progress']) setJsonProgress(true);
 
     if (!group || args.help) { printHelp(); process.exit(0); }
+
+    setMaxRetryWait(resolveMaxRetryWait(args, process.env));
 
     // These commands handle their own sub-routing internally; second positional
     // is a path/query/name — not a subcommand — so they cannot use DISPATCH[group.cmd].
@@ -357,5 +363,5 @@ async function main() {
 }
 
 main().catch(function(err) {
-    fatal(err.message);
+    fatal(err);
 });

@@ -197,6 +197,38 @@ describe("--dry-run output", function() {
         });
     });
 
+    describe("URL encoding and shell quoting in the preview", function() {
+        it("percent-encodes spaces and Unicode like the real request does", function() {
+            var result = spawnCLI(
+                ["fs", "delete", "/Shared/My Folder/za\u017c\u00f3\u0142\u0107", "--dry-run"],
+                OPTS
+            );
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain("/pubapi/v1/fs/Shared/My%20Folder/za%C5%BC%C3%B3%C5%82%C4%87'");
+            expect(result.stdout).not.toContain("My Folder");
+        });
+
+        it("escapes an apostrophe in the path so the quoting stays valid", function() {
+            var result = spawnCLI(["fs", "delete", "/Shared/it's", "--dry-run"], OPTS);
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain("/Shared/it'\\''s'");
+        });
+
+        it("keeps placeholders such as <entry-id> readable", function() {
+            var result = spawnCLI(["ai", "ask-document", "/Shared/My Folder/a.pdf", "Summary?", "--dry-run"], OPTS);
+            expect(result.status).toBe(0);
+            expect(result.stdout).toContain("/pubapi/v1/ai/document/<entry-id>/ask'");
+        });
+
+        it("escapes an apostrophe in the JSON body", function() {
+            var result = spawnCLI(
+                ["fs", "action", "/Shared/NewFolder", "--json", '{"action":"add_folder","note":"it\'s"}', "--dry-run"],
+                OPTS
+            );
+            expect(result.stdout).toContain("it'\\''s");
+        });
+    });
+
     // ── --yes / --dry-run enforcement (requireConfirmation) ───────────────────
     // Agent rule protected: Rule 1 (all mutations require --yes or --dry-run at binary level)
 

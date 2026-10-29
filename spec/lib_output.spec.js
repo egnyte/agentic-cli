@@ -1,6 +1,6 @@
 'use strict';
 
-const { requireConfirmation, CLIError } = require('../src/lib/output');
+const { requireConfirmation, serializeError, CLIError } = require('../src/lib/output');
 
 describe('requireConfirmation', function() {
 
@@ -42,4 +42,29 @@ describe('requireConfirmation', function() {
         }
     });
 
+});
+
+describe('serializeError', function() {
+
+    it('emits the rate-limit fields of a 429 CLIError', function() {
+        const err = new CLIError('HTTP 429: rate limited, retry after 2026-10-16T00:00:00Z', {
+            statusCode: 429,
+            retryAfter: 53984,
+            retryAt: '2026-10-16T00:00:00Z',
+            rateLimit: { quota_limit: 1000, quota_used: 1000 },
+        });
+
+        expect(serializeError(err)).toEqual({
+            error: 'HTTP 429: rate limited, retry after 2026-10-16T00:00:00Z',
+            status: 429,
+            retry_after: 53984,
+            retry_at: '2026-10-16T00:00:00Z',
+            _ratelimit: { quota_limit: 1000, quota_used: 1000 },
+        });
+    });
+
+    it('omits the rate-limit fields when the error has none', function() {
+        expect(serializeError(new CLIError('HTTP 404: not found', { statusCode: 404 })))
+            .toEqual({ error: 'HTTP 404: not found', status: 404 });
+    });
 });

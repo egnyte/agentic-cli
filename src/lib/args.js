@@ -44,4 +44,14 @@ function parseJsonArg(raw) {
     catch (e) { throw new CLIError('Invalid --json: ' + e.message); }
 }
 
-module.exports = { parseArgs, parseJsonArg };
+/**
+ * Fail before the request when --json carries keys the API silently ignores,
+ * so callers get an error instead of an unfiltered or unsorted result.
+ */
+function rejectIgnoredParams(command, route, params, keys, hint) {
+    const given = keys.filter(function(k) { return params[k] !== undefined; });
+    if (!given.length) return;
+    throw new CLIError(command + ' does not support ' + given.join(', ') + ': ' + route + ' ignores them.' + (hint ? ' ' + hint : ''));
+}
+
+module.exports = { parseArgs, parseJsonArg, rejectIgnoredParams };

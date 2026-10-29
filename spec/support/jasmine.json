@@ -5,6 +5,7 @@
     "!**/*_large*[sS]pec.js"
   ],
   "helpers": [
+    "helpers/isolated-home.js",
     "helpers/egnyte-test-config-loader.js",
     "helpers/matchers.js",
     "helpers/node-helpers/**/*.js"

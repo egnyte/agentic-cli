@@ -117,6 +117,22 @@ describe("SCHEMA registry", function() {
         });
     });
 
+    describe("deprecated operations", function() {
+        var replacements = { "ai.list-kbs": "agents.list", "ai.ask-kb": "agents.ask" };
+
+        Object.keys(replacements).forEach(function(op) {
+            it(op + " is marked deprecated and points to " + replacements[op], function() {
+                expect(SCHEMA[op].deprecated).toContain("Use " + replacements[op] + ".");
+                expect(SCHEMA[op].summary).toMatch(/^Deprecated — use /);
+            });
+        });
+
+        it("no other operation is marked deprecated", function() {
+            var deprecated = Object.keys(SCHEMA).filter(function(op) { return SCHEMA[op].deprecated; });
+            expect(deprecated.sort()).toEqual(Object.keys(replacements).sort());
+        });
+    });
+
     describe("HTTP methods", function() {
         it("fs.get uses GET",                function() { expect(SCHEMA["fs.get"].method).toBe("GET"); });
         it("fs.action uses POST",            function() { expect(SCHEMA["fs.action"].method).toBe("POST"); });
@@ -187,8 +203,8 @@ describe("SCHEMA registry", function() {
         it("events.list requires id param", function() {
             expect(SCHEMA["events.list"].query_params.id.required).toBe(true);
         });
-        it("events.list documents count, folder, type, suppress params", function() {
-            ["count", "folder", "type", "suppress"].forEach(function(p) {
+        it("events.list documents count, folder, type, suppress, reverse params", function() {
+            ["count", "folder", "type", "suppress", "reverse"].forEach(function(p) {
                 expect(SCHEMA["events.list"].query_params[p]).toBeDefined();
             });
         });
@@ -295,6 +311,29 @@ describe("SCHEMA registry", function() {
         });
     });
 
+    // API drift (spec 9f2ca872, findings ae907b0238b4, e90785081246): GET /v1/search has no
+    // custom_metadata or namespaces parameter (only POST /v2/search does), so they were ignored.
+    describe("search.advanced query_params match GET /v1/search", function() {
+        it("does not declare custom_metadata or namespaces", function() {
+            var params = SCHEMA["search.advanced"].query_params;
+            expect(params.custom_metadata).toBeUndefined();
+            expect(params.namespaces).toBeUndefined();
+        });
+
+        it("example does not use custom_metadata or namespaces", function() {
+            expect(SCHEMA["search.advanced"].example).not.toContain("custom_metadata");
+            expect(SCHEMA["search.advanced"].example).not.toContain("namespaces");
+        });
+    });
+
+    // API drift (spec 9f2ca872, findings 1168e9b4f15b, c0cf1fd50ce2): GET /v2/users accepts
+    // startIndex, count and filter only; sortBy/sortOrder are ignored.
+    describe("users.list query_params match GET /v2/users", function() {
+        it("declares exactly startIndex, count and filter", function() {
+            expect(Object.keys(SCHEMA["users.list"].query_params).sort()).toEqual(["count", "filter", "startIndex"]);
+        });
+    });
+
     // Schema truthfulness against a real Assistant API payload captured during live QA.
     // Catches schema/API drift offline: every declared field must actually appear on a
     // real response, and every real field must be documented.
@@ -317,6 +356,31 @@ describe("SCHEMA registry", function() {
             Object.keys(fixture).forEach(function(field) {
                 expect(declaredFields).toContain(field, "real payload field '" + field + "' is undocumented in ai.status.response_fields");
             });
+        });
+    });
+
+    describe("events.list count and suppress", function() {
+        // The live API accepts only app or user (anything else is HTTP 400) and suppresses nothing
+        // when the parameter is omitted; without count it returns 50 events.
+        it("documents suppress as app | user", function() {
+            var p = SCHEMA["events.list"].query_params.suppress;
+            expect(p.enum).toEqual(["app", "user"]);
+            expect(p.required).toBe(false);
+        });
+        it("documents count default 50, max 100", function() {
+            var d = SCHEMA["events.list"].query_params.count.description;
+            expect(d).toContain("default 50");
+            expect(d).toContain("max 100");
+        });
+    });
+
+    describe("events.list reverse", function() {
+        // GET /v1/events accepts reverse as "0" or "1".
+        it("documents reverse as an optional 0/1 query parameter", function() {
+            var p = SCHEMA["events.list"].query_params.reverse;
+            expect(p).toBeDefined();
+            expect(p.required).toBe(false);
+            expect(p.enum).toEqual(["0", "1"]);
         });
     });
 

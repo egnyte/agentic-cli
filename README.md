@@ -289,6 +289,8 @@ Every command outputs JSON to `stdout`. Errors are written as `{"error":"..."}` 
 | `--parallelism <n>` | Max in-flight bulk operations (default: `2`) |
 | `--progress` | Human-readable progress updates on `stderr` |
 | `--json-progress` | Newline-delimited JSON progress events on `stderr` |
+| `--verbose` | Include rate-limit headers (`_ratelimit`) in the output, also on a `429` error |
+| `--max-retry-wait <s>` | Longest `429` `Retry-After` to wait out (default: `60`, max: `86400`, `0` = never wait); env: `EGNYTE_MAX_RETRY_WAIT` |
 | `--profile <name>` | Use a named profile instead of the default |
 | `--token` / `--domain` | Override stored credentials for one call |
 
@@ -338,7 +340,7 @@ egnyte schema fs.action
 egnyte schema users.create
 egnyte schema events.list
 egnyte schema search.advanced
-egnyte schema ai.ask-kb
+egnyte schema agents.ask
 ```
 
 Example output:
@@ -487,7 +489,7 @@ egnyte fs set-metadata /Shared/contract.pdf \
 # Basic full-text search
 egnyte search <query> [--json '{}'] [--fields a,b,c]
 
-# Advanced search with metadata filters, date ranges, and folder scoping
+# Advanced search with date ranges and folder scoping
 egnyte search advanced <query> [--json '{}'] [--fields a,b,c]
 ```
 
@@ -502,13 +504,8 @@ egnyte search "budget" \
 
 # Advanced search — date filter
 egnyte search advanced "contract" \
-  --json '{"folder":"/Shared/Legal","modified_after":"2024-01-01","type":"file"}' \
+  --json '{"folder":"/Shared/Legal","modified_after":"2024-01-01","type":"FILE"}' \
   --fields results.name,results.path,results.size
-
-# Advanced search — custom metadata filter
-egnyte search advanced "NDA" \
-  --json '{"custom_metadata":{"status":"signed"},"namespaces":["contract"]}' \
-  --fields results.name,results.path
 ```
 
 ---
@@ -530,10 +527,8 @@ egnyte ai ask-document <path> "<question>" [--json '{}'] [--fields a,b,c]
 # Summarize a file (path auto-resolved to entry-id)
 egnyte ai summarize <path> [--fields response]
 
-# List available Knowledge Bases
+# Deprecated — use agents list / agents ask (see below)
 egnyte ai list-kbs [--json '{}'] [--fields content]
-
-# Query a specific Knowledge Base
 egnyte ai ask-kb <kb-id> "<question>" [--json '{}'] [--fields response,citations]
 
 # Semantic + keyword hybrid search
@@ -573,16 +568,6 @@ egnyte ai ask-document /Shared/Contracts/acme.pdf "What are the payment terms?" 
 # Summarize a file
 egnyte ai summarize /Shared/Reports/annual-report.pdf --fields response
 
-# List active Knowledge Bases
-egnyte ai list-kbs \
-  --json '{"status":["ACTIVE"],"sortBy":["name"],"sortDirection":["ASC"]}' \
-  --fields content
-
-# Query a Knowledge Base with citations
-egnyte ai ask-kb kb-abc123 "What is the refund policy?" \
-  --json '{"includeCitations":true}' \
-  --fields response,citations
-
 # Hybrid search — balance semantic vs keyword matching with semanticWeight (0.0–1.0)
 egnyte ai hybrid-search "quarterly report" \
   --json '{"semanticWeight":0.7,"folderPath":"/Shared/Finance","limit":10}' \
@@ -592,6 +577,8 @@ egnyte ai hybrid-search "quarterly report" \
 **Statuses and exit codes** for `ai ask` / `ai status` are covered in [Assistant polling & exit codes](#assistant-polling--exit-codes). Check `status` before reading `responseText`.
 
 `ai ask` requires `--yes` or `--dry-run` — Assistant tool-calls can create or modify content. All other AI commands (`ask-document`, `summarize`, `ask-kb`, `list-kbs`, `hybrid-search`) are read-only — `--yes` is not required.
+
+`ai list-kbs` and `ai ask-kb` are deprecated: Egnyte is migrating Knowledge Bases to [Agents](#agents). Both commands still work on accounts that have not been migrated yet and print a warning on `stderr`; on migrated accounts the API returns HTTP `410` (`KBA_MIGRATED_TO_AGENTS`). Use `agents list` / `agents ask` instead. If `agents` commands return HTTP `403` (`AGENTS_FEATURE_NOT_ENABLED`), the account has not been migrated yet: keep using `ai list-kbs` / `ai ask-kb` until it is. Both commands will be removed in a future release.
 
 ---
 
@@ -728,6 +715,8 @@ egnyte groups delete <id> --yes
 
 Folder permission levels: `Owner` | `Editor` | `Viewer` | `None`
 
+Reads (`get-user`, `get-group`) use GET v1 and writes use POST v2 on purpose: GET v2 rejects top-level folders such as `/Shared` and returns a different shape. See `egnyte schema perms.get-user`.
+
 ```bash
 # Get all user permissions on a folder
 egnyte perms get-user /Shared/Finance --fields users
@@ -841,7 +830,7 @@ egnyte lock unlock /Shared/report.pdf --json '{"lock_token": "my-token"}'
 
 ### Trash
 
-Manage deleted items and recovery.
+Manage deleted items and recovery. `list` uses GET v2 and `restore` / `delete` use POST v1, as the published API defines them (`egnyte schema trash.restore`).
 
 ```bash
 # List items in the trash
@@ -860,7 +849,7 @@ egnyte trash delete --json '{"ids": ["item_id_1"]}' --yes
 
 ### Projects
 
-Manage lifecycle and metadata for project folders.
+Manage lifecycle and metadata for project folders. `create` without `templateFolderId` uses POST v1 (mark an existing folder); with it, POST v2 (from a template). See `egnyte schema projects.create`.
 
 ```bash
 # List all project folders in the domain
@@ -907,11 +896,11 @@ Works offline — no auth, no config, no network. `--version` (also `-v`) prints
 
 ```bash
 egnyte --version
-# 2.2.0
+# 2.3.0
 
 egnyte version
 # {
-#   "version": "2.2.0"
+#   "version": "2.3.0"
 # }
 ```
 
@@ -987,7 +976,7 @@ egnyte fs delete --bulk-file-path ./delete.csv --parallelism 2 --progress --yes
 
 ### 6. Rate-limit retry
 
-On `429 Too Many Requests`, the CLI automatically retries up to 3 times, honouring the `Retry-After` response header when present and falling back to exponential backoff (1 s → 2 s → 4 s). On `5xx` server errors, the CLI retries GET and HEAD requests up to 3 times with exponential backoff and jitter; POST/PUT/DELETE fail immediately by design to avoid duplicate mutations. Agents running in a polling loop will not fail on transient rate limits or gateway hiccups.
+On `429 Too Many Requests`, the CLI automatically retries up to 3 times, honouring the `Retry-After` response header when present and falling back to exponential backoff (1 s → 2 s → 4 s). Every wait is announced on `stderr` (`[retry] HTTP 429, waiting 5s (1/3)`; with `--json-progress` as a `{"type":"retry","status":429,"wait":5,"attempt":1,"max":3}` line, so the stream stays newline-delimited JSON), so the command never goes silent. A `Retry-After` of more than 60 s — typically the daily API quota (1000 calls per token by default, reset at 00:00 UTC) — is not waited out: the CLI exits `1` immediately with `{"error":"HTTP 429: rate limited, retry after 2026-10-16T00:00:00Z","status":429,"retry_after":53984,"retry_at":"2026-10-16T00:00:00Z"}`. Raise the limit with `--max-retry-wait <seconds>` or the `EGNYTE_MAX_RETRY_WAIT` environment variable (the flag wins; `0` means never wait). With `--verbose`, the 429 error also carries the `_ratelimit` headers. On `5xx` server errors, the CLI retries GET and HEAD requests up to 3 times with exponential backoff and jitter; POST/PUT/DELETE fail immediately by design to avoid duplicate mutations. Agents running in a polling loop will not fail on transient rate limits or gateway hiccups.
 
 ### 7. Zero runtime dependencies
 
