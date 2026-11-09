@@ -63,6 +63,22 @@ describe('resumable downloads (offline)', function() {
         expect(fs.readFileSync(outPath)).toEqual(content);
     });
 
+    it('uses the configured HTTP proxy for streaming downloads', async function() {
+        const previousProxy = process.env.HTTPS_PROXY;
+        process.env.HTTPS_PROXY = 'http://proxy.example:8080';
+        try {
+            await apiDownload(options, outPath, false);
+            const requestOptions = https.request.calls.mostRecent().args[0];
+            expect(requestOptions.agent).toEqual(jasmine.any(https.Agent));
+            expect(requestOptions.hostname).toBe('testdomain.egnyte.com');
+            expect(requestOptions.port).toBe(443);
+            expect(fs.readFileSync(outPath)).toEqual(content);
+        } finally {
+            if (previousProxy === undefined) delete process.env.HTTPS_PROXY;
+            else process.env.HTTPS_PROXY = previousProxy;
+        }
+    });
+
     it('sends the local byte offset and appends a 206 response exactly once', async function() {
         fs.writeFileSync(outPath, prefix);
         response = {
