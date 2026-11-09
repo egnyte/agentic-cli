@@ -156,6 +156,27 @@ export EGNYTE_REDIRECT_URI=https://www.egnyte.com      # default; only set if yo
 
 No config file is read or written when `EGNYTE_TOKEN` + `EGNYTE_DOMAIN` are present.
 
+### HTTP proxy support
+
+All CLI-originated HTTPS traffic can be routed through an HTTP proxy, including API requests, OAuth token exchange and refresh, uploads, and streaming downloads:
+
+```bash
+export HTTPS_PROXY=http://proxy.company.com:8080
+egnyte userinfo --fields username,email
+```
+
+`HTTP_PROXY` is used as a fallback, and lowercase `https_proxy` / `http_proxy` are also accepted. The proxy must support HTTP `CONNECT`. HTTPS proxies and SOCKS proxies are not supported.
+
+For proxy authentication, include URL-encoded credentials in the proxy URL, for example `http://user:password@proxy.company.com:8080`. Credentials are sent only to the proxy in the `CONNECT` request.
+
+Set `NO_PROXY` (or `no_proxy`) for comma-separated hostname suffixes that should connect directly. Entries may include a port, and `*` bypasses the proxy for every destination:
+
+```bash
+export NO_PROXY=mycompany.egnyte.com,localhost,127.0.0.1
+```
+
+The browser-based authorization page uses the browser's own proxy configuration. The CLI's localhost OAuth callback server is not proxied.
+
 ### Auth precedence
 
 ```

@@ -1,23 +1,29 @@
 'use strict';
 
 const EventEmitter = require('events');
+const http = require('http');
 const https = require('https');
+const tls = require('tls');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
 
-const { apiRequest, apiDownload, httpRequest, buildAuth, buildUrl,
+const { apiRequest, apiDownload, httpRequest, httpPost, buildAuth, buildUrl,
         setVerbose, setMaxRetryWait, resolveMaxRetryWait, setJsonProgress } = require('../src/lib/http');
 const { CLIError } = require('../src/lib/output');
+
+const PROXY_ENV_VARS = ['HTTPS_PROXY', 'https_proxy', 'HTTP_PROXY', 'http_proxy', 'NO_PROXY', 'no_proxy'];
 
 describe('http helpers', function() {
     let originalRequest;
     let originalSetTimeout;
     let originalMathRandom;
+    let originalProxyEnv;
     let queuedResponses;
     let callMethods;
     let callHeaders;
+    let callOptions;
     let delays;
     let stderrOutput;
 
@@ -25,9 +31,15 @@ describe('http helpers', function() {
         originalRequest = https.request;
         originalSetTimeout = global.setTimeout;
         originalMathRandom = Math.random;
+        originalProxyEnv = {};
+        PROXY_ENV_VARS.forEach(function(name) {
+            originalProxyEnv[name] = process.env[name];
+            delete process.env[name];
+        });
         queuedResponses = [];
         callMethods = [];
         callHeaders = [];
+        callOptions = [];
         delays = [];
         stderrOutput = [];
 
@@ -44,6 +56,7 @@ describe('http helpers', function() {
         https.request = function(options, callback) {
             callMethods.push(options.method);
             callHeaders.push(options.headers);
+            callOptions.push(options);
 
             const plan = queuedResponses.shift();
             if (!plan) throw new Error('No queued response for request');
@@ -78,6 +91,10 @@ describe('http helpers', function() {
         https.request = originalRequest;
         global.setTimeout = originalSetTimeout;
         Math.random = originalMathRandom;
+        PROXY_ENV_VARS.forEach(function(name) {
+            if (originalProxyEnv[name] === undefined) delete process.env[name];
+            else process.env[name] = originalProxyEnv[name];
+        });
         setVerbose(false);
         setMaxRetryWait(60);
         setJsonProgress(false);
@@ -298,6 +315,126 @@ describe('http helpers', function() {
         } finally {
             try { fs.unlinkSync(outPath); } catch (_) {}
         }
+    });
+
+    describe('HTTP proxy support', function() {
+        const requestOptions = {
+            domain: 'https://testdomain.egnyte.com',
+            token: 'token',
+            method: 'GET',
+            apiPath: '/pubapi/v1/userinfo',
+        };
+
+        async function proxyAgent() {
+            queuedResponses.push({ status: 200, body: '{}', headers: { 'content-type': 'application/json' } });
+            await apiRequest(requestOptions);
+            return callOptions[0].agent;
+        }
+
+        it('leaves requests direct when no proxy is configured', async function() {
+            expect(await proxyAgent()).toBeUndefined();
+        });
+
+        it('opens an authenticated CONNECT tunnel and starts TLS to the destination', async function() {
+            process.env.HTTPS_PROXY = 'http://user:p%40ss@proxy.example:8080';
+            const agent = await proxyAgent();
+            expect(agent).toEqual(jasmine.any(https.Agent));
+            expect(callOptions[0].hostname).toBe('testdomain.egnyte.com');
+            expect(callOptions[0].port).toBe(443);
+            expect(callHeaders[0]['Proxy-Authorization']).toBeUndefined();
+
+            const socket = new EventEmitter();
+            socket.destroy = jasmine.createSpy('socketDestroy');
+            socket.unshift = jasmine.createSpy('socketUnshift');
+            const secureSocket = new EventEmitter();
+            const connectRequest = new EventEmitter();
+            connectRequest.setTimeout = function() {};
+            connectRequest.end = function() {
+                connectRequest.emit('connect', { statusCode: 200 }, socket, Buffer.alloc(0));
+            };
+
+            let connectOptions;
+            spyOn(http, 'request').and.callFake(function(options) {
+                connectOptions = options;
+                return connectRequest;
+            });
+            spyOn(tls, 'connect').and.returnValue(secureSocket);
+
+            let callbackArgs;
+            agent.createConnection({ host: 'testdomain.egnyte.com', port: 443 }, function() {
+                callbackArgs = Array.prototype.slice.call(arguments);
+            });
+
+            expect(connectOptions.method).toBe('CONNECT');
+            expect(connectOptions.hostname).toBe('proxy.example');
+            expect(connectOptions.port).toBe(8080);
+            expect(connectOptions.path).toBe('testdomain.egnyte.com:443');
+            expect(connectOptions.headers.Host).toBe('testdomain.egnyte.com:443');
+            expect(connectOptions.headers['Proxy-Authorization']).toBe(
+                'Basic ' + Buffer.from('user:p@ss').toString('base64')
+            );
+            expect(tls.connect.calls.mostRecent().args[0].socket).toBe(socket);
+            expect(tls.connect.calls.mostRecent().args[0].servername).toBe('testdomain.egnyte.com');
+            expect(callbackArgs[0]).toBeNull();
+            expect(callbackArgs[1]).toBe(secureSocket);
+        });
+
+        it('surfaces a proxy CONNECT rejection without starting TLS', async function() {
+            process.env.HTTPS_PROXY = 'http://proxy.example:8080';
+            const agent = await proxyAgent();
+            const socket = new EventEmitter();
+            socket.destroy = jasmine.createSpy('socketDestroy');
+            const connectRequest = new EventEmitter();
+            connectRequest.setTimeout = function() {};
+            connectRequest.end = function() {
+                connectRequest.emit('connect', { statusCode: 407 }, socket, Buffer.alloc(0));
+            };
+            spyOn(http, 'request').and.returnValue(connectRequest);
+            spyOn(tls, 'connect');
+
+            let connectionError;
+            agent.createConnection({ host: 'testdomain.egnyte.com', port: 443 }, function(err) {
+                connectionError = err;
+            });
+
+            expect(connectionError.message).toBe('Proxy CONNECT failed with HTTP 407');
+            expect(socket.destroy).toHaveBeenCalled();
+            expect(tls.connect).not.toHaveBeenCalled();
+        });
+
+        it('uses HTTP_PROXY as a fallback for OAuth token requests', async function() {
+            process.env.HTTP_PROXY = 'proxy.example:8080';
+            queuedResponses.push({
+                status: 200,
+                body: '{"access_token":"oauth-token"}',
+                headers: { 'content-type': 'application/json' },
+            });
+
+            const result = await httpPost(
+                'https://testdomain.egnyte.com/puboauth/token',
+                'grant_type=refresh_token',
+                'application/x-www-form-urlencoded'
+            );
+
+            expect(result.access_token).toBe('oauth-token');
+            expect(callOptions[0].agent).toEqual(jasmine.any(https.Agent));
+            expect(callOptions[0].port).toBe(443);
+        });
+
+        it('honors NO_PROXY hostname suffixes and ports', async function() {
+            process.env.HTTPS_PROXY = 'http://proxy.example:8080';
+            process.env.NO_PROXY = 'other.example, .egnyte.com:443';
+            expect(await proxyAgent()).toBeUndefined();
+        });
+
+        it('rejects unsupported proxy protocols before sending a request', async function() {
+            process.env.HTTPS_PROXY = 'socks5://proxy.example:1080';
+            await expectAsync(apiRequest(requestOptions)).toBeRejectedWithError(
+                CLIError,
+                'Unsupported proxy protocol. Use an HTTP proxy URL: http://host[:port].'
+            );
+            expect(callOptions.length).toBe(0);
+        });
     });
 
     describe('429 handling', function() {

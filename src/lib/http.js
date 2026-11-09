@@ -1,8 +1,11 @@
 'use strict';
 
 const fs    = require('fs');
-const os    = require('os');
+const http  = require('http');
 const https = require('https');
+const net   = require('net');
+const os    = require('os');
+const tls   = require('tls');
 const { URL } = require('url');
 const { CLIError, info } = require('./output');
 const { buildEgnyteBaseUrl } = require('./domain');
@@ -194,6 +197,146 @@ function buildUrl(domain, apiPath, query, authSource) {
     return qs ? base + '?' + qs : base;
 }
 
+const PROXY_CONNECT_TIMEOUT_MS = 30000;
+
+function _cleanHostname(hostname) {
+    return String(hostname || '').replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+}
+
+/** Match NO_PROXY entries such as example.com, .example.com:443, [::1], or *. */
+function _isProxyBypassed(hostname, port, noProxy) {
+    if (!noProxy) return false;
+    const host = _cleanHostname(hostname);
+
+    return String(noProxy).split(',').some(function(rawEntry) {
+        let entry = rawEntry.trim().toLowerCase();
+        if (!entry) return false;
+        if (entry === '*') return true;
+
+        let entryPort;
+        if (entry[0] === '[') {
+            const end = entry.indexOf(']');
+            if (end === -1) return false;
+            const remainder = entry.slice(end + 1);
+            if (remainder && !/^:\d+$/.test(remainder)) return false;
+            entryPort = remainder ? remainder.slice(1) : undefined;
+            entry = entry.slice(1, end);
+        } else {
+            const portMatch = entry.match(/^(.*):(\d+)$/);
+            if (portMatch && portMatch[1].indexOf(':') === -1) {
+                entry = portMatch[1];
+                entryPort = portMatch[2];
+            }
+        }
+
+        if (entryPort && Number(entryPort) !== Number(port || 443)) return false;
+        entry = _cleanHostname(entry).replace(/^\./, '');
+        return entry && (host === entry || host.endsWith('.' + entry));
+    });
+}
+
+/** Resolve standard proxy environment variables without exposing credentials in errors. */
+function _proxyFromEnv(options) {
+    const env = process.env;
+    const port = Number(options.port) || 443;
+    if (_isProxyBypassed(options.hostname || options.host, port, env.NO_PROXY || env.no_proxy)) return null;
+
+    let raw = env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+    if (!raw || !raw.trim()) return null;
+    raw = raw.trim();
+    if (raw.indexOf('://') === -1) raw = 'http://' + raw;
+
+    let proxy;
+    try {
+        proxy = new URL(raw);
+    } catch (_) {
+        throw new CLIError('Invalid HTTP proxy URL. Expected http://host[:port].');
+    }
+    if (proxy.protocol !== 'http:' || !proxy.hostname) {
+        throw new CLIError('Unsupported proxy protocol. Use an HTTP proxy URL: http://host[:port].');
+    }
+
+    let authorization;
+    if (proxy.username || proxy.password) {
+        try {
+            const credentials = decodeURIComponent(proxy.username) + ':' + decodeURIComponent(proxy.password);
+            authorization = 'Basic ' + Buffer.from(credentials).toString('base64');
+        } catch (_) {
+            throw new CLIError('Invalid HTTP proxy credentials: URL encoding is malformed.');
+        }
+    }
+
+    return {
+        hostname: _cleanHostname(proxy.hostname),
+        port: Number(proxy.port) || 80,
+        authorization,
+    };
+}
+
+/**
+ * Create an HTTPS agent that tunnels through an HTTP proxy with CONNECT.
+ * Each agent is request-scoped, matching the existing non-keep-alive behavior.
+ */
+function _proxyAgentFor(options) {
+    const proxy = _proxyFromEnv(options);
+    if (!proxy) return undefined;
+
+    const targetHost = _cleanHostname(options.hostname || options.host);
+    const targetPort = Number(options.port) || 443;
+    const authority = (net.isIP(targetHost) === 6 ? '[' + targetHost + ']' : targetHost) + ':' + targetPort;
+    const agent = new https.Agent();
+
+    agent.createConnection = function(connectionOptions, callback) {
+        const headers = { Host: authority };
+        if (proxy.authorization) headers['Proxy-Authorization'] = proxy.authorization;
+
+        const connectRequest = http.request({
+            hostname: proxy.hostname,
+            port: proxy.port,
+            method: 'CONNECT',
+            path: authority,
+            headers,
+        });
+        let settled = false;
+        function done(err, socket) {
+            if (settled) return;
+            settled = true;
+            callback(err, socket);
+        }
+
+        connectRequest.once('connect', function(res, socket, head) {
+            // The tunnel is ready; the outer HTTPS request now owns socket timeouts.
+            connectRequest.setTimeout(0);
+            if (res.statusCode !== 200) {
+                socket.destroy();
+                done(new Error('Proxy CONNECT failed with HTTP ' + res.statusCode));
+                return;
+            }
+            if (head.length) socket.unshift(head);
+
+            const tlsOptions = Object.assign({}, connectionOptions, { socket });
+            if (!tlsOptions.servername && net.isIP(targetHost) === 0) tlsOptions.servername = targetHost;
+            let secureSocket;
+            try {
+                secureSocket = tls.connect(tlsOptions);
+            } catch (err) {
+                socket.destroy();
+                done(err);
+                return;
+            }
+            done(null, secureSocket);
+        });
+        connectRequest.once('error', done);
+        connectRequest.setTimeout(PROXY_CONNECT_TIMEOUT_MS, function() {
+            connectRequest.destroy(new Error('Proxy CONNECT timed out after 30s'));
+        });
+        connectRequest.end();
+        // Node calls the callback asynchronously once the tunnel is ready.
+    };
+
+    return agent;
+}
+
 /**
  * Single HTTP request, no retries. Returns { status, headers, body: Buffer }.
  * Internal: apiRequest runs its own retry loop around it; other callers use httpRequest.
@@ -203,7 +346,10 @@ function buildUrl(domain, apiPath, query, authSource) {
  */
 function _httpRequestOnce(options, body, timeoutMs) {
     return new Promise(function(resolve, reject) {
-        const req = https.request(options, function(res) {
+        const requestOptions = Object.assign({}, options);
+        const proxyAgent = _proxyAgentFor(requestOptions);
+        if (proxyAgent) requestOptions.agent = proxyAgent;
+        const req = https.request(requestOptions, function(res) {
             const chunks = [];
             res.on('data', function(chunk) { chunks.push(chunk); });
             res.on('end', function() {
@@ -247,8 +393,10 @@ async function httpPost(url, body, contentType) {
     return new Promise(function(resolve, reject) {
         const req = https.request({
             hostname: parsed.hostname,
+            port:     parsed.port || 443,
             path:     parsed.pathname + parsed.search,
             method:   'POST',
+            agent:    _proxyAgentFor(parsed),
             headers:  {
                 'Content-Type':   contentType,
                 'Content-Length': buf.length,
@@ -306,6 +454,7 @@ async function apiRequest(opts) {
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         const resp = await _httpRequestOnce({
             hostname: parsed.hostname,
+            port:     parsed.port || 443,
             path:     parsed.pathname + parsed.search,
             method: normalizedMethod,
             headers,
@@ -429,8 +578,10 @@ function _downloadOnce(opts, outPath, resume) {
     return new Promise(function(resolve, reject) {
         const req = https.request({
             hostname: parsed.hostname,
+            port:     parsed.port || 443,
             path:     parsed.pathname + parsed.search,
             method:   'GET',
+            agent:    _proxyAgentFor(parsed),
             headers:  reqHeaders,
         }, function(res) {
             // 416 Range Not Satisfiable — the file on disk is already complete
